@@ -3,16 +3,19 @@
   "host": "https://dbc-7f43f663-9937.cloud.databricks.com",
   "remote_path": "/Workspace/Users/shahar.o@claroty.com/databricks_apps/sales-dashboard-test_2026_01_05-12_21/streamlit-hello-world-app",
   "last_modified_times": {
-    "app.py": "2026-01-08T14:54:18.0140254+02:00",
+    ".github/workflows/deploy.yml": "2026-01-08T16:33:26.0321643+02:00",
+    "app.py": "2026-01-08T16:35:00.7302116+02:00",
     "app.yaml": "2026-01-05T14:26:04.4540481+02:00",
     "requirements.txt": "2026-01-08T13:49:34.1903767+02:00"
   },
   "local_to_remote_names": {
+    ".github/workflows/deploy.yml": ".github/workflows/deploy.yml",
     "app.py": "app.py",
     "app.yaml": "app.yaml",
     "requirements.txt": "requirements.txt"
   },
   "remote_to_local_names": {
+    ".github/workflows/deploy.yml": ".github/workflows/deploy.yml",
     "app.py": "app.py",
     "app.yaml": "app.yaml",
     "requirements.txt": "requirements.txt"

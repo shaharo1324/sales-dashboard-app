@@ -1,0 +1,20 @@
+name: Databricks App Deploy
+
+on:
+  push:
+    branches: [ main ] # Trigger only on pushes to main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3 # Copies your code to the GitHub bot
+      
+      - name: Setup Databricks CLI
+        uses: databricks/setup-cli@main
+        
+      - name: Deploy Asset Bundle
+        run: databricks bundle deploy -t prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
