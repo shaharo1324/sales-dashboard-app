@@ -10,6 +10,36 @@ import plotly.graph_objects as go
 
 st.set_page_config(layout="wide")
 
+# Custom CSS for the Apply Filters button (Soft Red)
+st.markdown("""
+<style>
+[data-testid="stForm"] button {
+    border-color: #ffcccc !important;
+    background-color: #3f51b5 !important;
+    color: #ffcccc !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+/* Hover state */
+[data-testid="stForm"] button:hover {
+    border-color: #cc0000 !important;
+    background-color: #2d2a8a !important; /* Slightly darker for hover */
+    color: #cc0000 !important;
+    background-image: none !important;
+    box-shadow: none !important;
+}
+
+/* Focus/Active state (when clicked) */
+[data-testid="stForm"] button:focus, [data-testid="stForm"] button:active {
+    background-color: #3f3bb8 !important;
+    color: #cc0000 !important;
+    border-color: #ffcccc !important;
+    box-shadow: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.header("Sales Dashboard")
 
 MAIN_SQL_HTTP_PATH = "/sql/1.0/warehouses/472969065f3aed02"
@@ -377,6 +407,9 @@ else:
 
 # Use a form to batch filter changes - form only triggers rerun on submit
 with st.sidebar.form("filters_form"):
+    # Submit button at the top
+    submitted = st.form_submit_button("🔄 Apply Filters & Refresh", use_container_width=True)
+    
     st.subheader("Organization Filters")
     # Create filter dropdowns inside the form
     selected_region = st.selectbox(
@@ -453,9 +486,6 @@ with st.sidebar.form("filters_form"):
         options=[None] + filter_options.get('mac_oui', []),
         format_func=lambda x: "All" if x is None else x
     )
-    
-    # Submit button triggers the query
-    submitted = st.form_submit_button("🔄 Apply Filters & Refresh", type="primary", use_container_width=True)
 
 # Initialize session state to store last query result
 if 'last_stats' not in st.session_state:
