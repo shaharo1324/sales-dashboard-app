@@ -6,18 +6,21 @@
     ".github/workflows/deploy.yml": "2026-01-08T16:33:26.0321643+02:00",
     "app.py": "2026-01-08T16:35:00.7302116+02:00",
     "app.yaml": "2026-01-05T14:26:04.4540481+02:00",
+    "databricks.yml": "2026-01-08T16:46:34.1637978+02:00",
     "requirements.txt": "2026-01-08T13:49:34.1903767+02:00"
   },
   "local_to_remote_names": {
     ".github/workflows/deploy.yml": ".github/workflows/deploy.yml",
     "app.py": "app.py",
     "app.yaml": "app.yaml",
+    "databricks.yml": "databricks.yml",
     "requirements.txt": "requirements.txt"
   },
   "remote_to_local_names": {
     ".github/workflows/deploy.yml": ".github/workflows/deploy.yml",
     "app.py": "app.py",
     "app.yaml": "app.yaml",
+    "databricks.yml": "databricks.yml",
     "requirements.txt": "requirements.txt"
   }
 }

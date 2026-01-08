@@ -1,0 +1,20 @@
+bundle:
+  name: sales-dashboard-test
+
+# This tells Databricks which files to upload
+include:
+  - app.py
+  - requirements.txt
+
+apps:
+  device_inventory:
+    name: "device_inventory_dashboard"
+    # The command Databricks uses to start your app
+    command: ["streamlit", "run", "app.py"]
+
+targets:
+  # This matches the "-t prod" in your GitHub Action
+  prod:
+    workspace:
+      # This points to the secret you set in GitHub
+      host: https://adb-xxxxx.x.azuredatabricks.net
