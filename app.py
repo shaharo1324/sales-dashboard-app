@@ -1,0 +1,701 @@
+import streamlit as st
+import pandas as pd
+from databricks import sql
+from databricks.sdk.core import Config
+from typing import Any, Dict, List, Optional
+import os
+import plotly.graph_objects as go
+
+st.set_page_config(layout="wide")
+
+st.header("Sales Dashboard")
+
+MAIN_SQL_HTTP_PATH = "/sql/1.0/warehouses/472969065f3aed02"
+
+cfg = Config()
+
+@st.cache_resource
+def get_connection() -> Any:
+    """Create and cache a Databricks SQL connection."""
+    return sql.connect(
+        server_hostname=cfg.host,
+        http_path=MAIN_SQL_HTTP_PATH,
+        credentials_provider=lambda: cfg.authenticate,
+    )
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def get_filter_options() -> Optional[Dict[str, List[str]]]:
+    """Fetch unique values for all filter fields using pre-calculated tables."""
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+        
+        # Query 1: Organization filters
+        query_org = """
+        SELECT
+            region,
+            vertical,
+            organization,
+            industry,
+            account_status
+        FROM `s3-write-bucket`.sales_dashboard.organization_filters
+        """
+        
+        cursor.execute(query_org)
+        results_org = cursor.fetchall()
+        
+        # Query 2: Device filters
+        query_device = """
+        SELECT
+            vendor,
+            device_type_family,
+            device_subcategory,
+            device_category,
+            model,
+            os_name,
+            mac_oui
+        FROM `s3-write-bucket`.sales_dashboard.device_filters
+        """
+        
+        cursor.execute(query_device)
+        results_device = cursor.fetchall()
+        cursor.close()
+        
+        # Extract unique values for each field
+        filter_options = {
+            # Organization filters
+            'region': sorted(set(r[0] for r in results_org if r[0])),
+            'vertical': sorted(set(r[1] for r in results_org if r[1])),
+            'organization': sorted(set(r[2] for r in results_org if r[2])),
+            'industry': sorted(set(r[3] for r in results_org if r[3])),
+            'account_status': sorted(set(r[4] for r in results_org if r[4])),
+            
+            # Device filters
+            'vendor': sorted(set(r[0] for r in results_device if r[0])),
+            'device_type_family': sorted(set(r[1] for r in results_device if r[1])),
+            'device_subcategory': sorted(set(r[2] for r in results_device if r[2])),
+            'device_category': sorted(set(r[3] for r in results_device if r[3])),
+            'model': sorted(set(r[4] for r in results_device if r[4])),
+            'os_name': sorted(set(r[5] for r in results_device if r[5])),
+            'mac_oui': sorted(set(r[6] for r in results_device if r[6]))
+        }
+        
+        return filter_options
+    except Exception as e:
+        # Don't show st.error here to avoid it getting stuck in UI
+        print(f"Error fetching filter options: {str(e)}")
+        return None
+
+@st.cache_data
+def get_global_stats(
+    region: Optional[str] = None,
+    vertical: Optional[str] = None,
+    organization: Optional[str] = None,
+    industry: Optional[str] = None,
+    account_status: Optional[str] = None,
+    vendor: Optional[str] = None,
+    device_category: Optional[str] = None,
+    device_type_family: Optional[str] = None,
+    device_subcategory: Optional[str] = None,
+    model: Optional[str] = None,
+    os_name: Optional[str] = None,
+    mac_oui: Optional[str] = None
+) -> Dict[str, pd.DataFrame]:
+    """Fetch aggregated statistics for the Global tab."""
+    cursor = None
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+        
+        # Build WHERE clause
+        where_clause = build_where_clause(
+            region, vertical, organization, industry, account_status, vendor, device_category,
+            device_type_family, device_subcategory, model, os_name, mac_oui
+        )
+        
+        # Query 1: Top Devices (Aggregated)
+        query_top_devices = f"""
+        SELECT 
+            vendor,
+            device_type_family,
+            model,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND vendor IS NOT NULL 
+            AND device_type_family IS NOT NULL 
+            AND model IS NOT NULL
+        GROUP BY vendor, device_type_family, model
+        ORDER BY count DESC
+        LIMIT 1000
+        """
+        
+        # Query 2: Device Subcategory Distribution (Aggregated)
+        query_subcategory = f"""
+        SELECT 
+            device_subcategory,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND device_subcategory IS NOT NULL
+        GROUP BY device_subcategory
+        ORDER BY count DESC
+        """
+        
+        # Query 3: Device Category Distribution (Aggregated)
+        query_category = f"""
+        SELECT 
+            device_category,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND device_category IS NOT NULL
+        GROUP BY device_category
+        ORDER BY count DESC
+        """
+        
+        cursor.execute(query_top_devices)
+        results_top = cursor.fetchall()
+        df_top = pd.DataFrame(results_top, columns=['vendor', 'device_type_family', 'model', 'count'])
+        
+        cursor.execute(query_subcategory)
+        results_sub = cursor.fetchall()
+        df_sub = pd.DataFrame(results_sub, columns=['device_subcategory', 'count'])
+        
+        cursor.execute(query_category)
+        results_cat = cursor.fetchall()
+        df_cat = pd.DataFrame(results_cat, columns=['device_category', 'count'])
+        
+        return {
+            "top_devices": df_top,
+            "subcategory": df_sub,
+            "category": df_cat
+        }
+        
+    except Exception as e:
+        st.error(f"Error querying Global stats: {str(e)}")
+        return {
+            "top_devices": pd.DataFrame(),
+            "subcategory": pd.DataFrame(),
+            "category": pd.DataFrame()
+        }
+    finally:
+        if cursor:
+            try: cursor.close()
+            except: pass
+
+@st.cache_data
+def get_risk_stats(
+    region: Optional[str] = None,
+    vertical: Optional[str] = None,
+    organization: Optional[str] = None,
+    industry: Optional[str] = None,
+    account_status: Optional[str] = None,
+    vendor: Optional[str] = None,
+    device_category: Optional[str] = None,
+    device_type_family: Optional[str] = None,
+    device_subcategory: Optional[str] = None,
+    model: Optional[str] = None,
+    os_name: Optional[str] = None,
+    mac_oui: Optional[str] = None
+) -> Dict[str, pd.DataFrame]:
+    """Fetch aggregated statistics for the Risk tab."""
+    cursor = None
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+        
+        # Build WHERE clause
+        where_clause = build_where_clause(
+            region, vertical, organization, industry, account_status, vendor, device_category,
+            device_type_family, device_subcategory, model, os_name, mac_oui
+        )
+        
+        # Query 4: Risk Score Distribution
+        query_risk_dist = f"""
+        SELECT 
+            risk_score,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND risk_score IS NOT NULL
+        GROUP BY risk_score
+        ORDER BY count DESC
+        """
+        
+        # Query 5: Top Devices by Risk Score (Critical)
+        query_risk_critical = f"""
+        SELECT 
+            vendor,
+            device_type_family,
+            model,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND risk_score = 'Critical'
+            AND vendor IS NOT NULL 
+            AND device_type_family IS NOT NULL 
+            AND model IS NOT NULL
+        GROUP BY vendor, device_type_family, model
+        ORDER BY count DESC
+        LIMIT 100
+        """
+        
+        # Query 6: Top Devices by Risk Score (High)
+        query_risk_high = f"""
+        SELECT 
+            vendor,
+            device_type_family,
+            model,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND risk_score = 'High'
+            AND vendor IS NOT NULL 
+            AND device_type_family IS NOT NULL 
+            AND model IS NOT NULL
+        GROUP BY vendor, device_type_family, model
+        ORDER BY count DESC
+        LIMIT 100
+        """
+        
+        # Query 7: Top Devices by Risk Score (Medium)
+        query_risk_medium = f"""
+        SELECT 
+            vendor,
+            device_type_family,
+            model,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND risk_score = 'Medium'
+            AND vendor IS NOT NULL 
+            AND device_type_family IS NOT NULL 
+            AND model IS NOT NULL
+        GROUP BY vendor, device_type_family, model
+        ORDER BY count DESC
+        LIMIT 100
+        """
+        
+        cursor.execute(query_risk_dist)
+        results_risk = cursor.fetchall()
+        df_risk = pd.DataFrame(results_risk, columns=['risk_score', 'count'])
+        
+        cursor.execute(query_risk_critical)
+        results_critical = cursor.fetchall()
+        df_critical = pd.DataFrame(results_critical, columns=['vendor', 'device_type_family', 'model', 'count'])
+        
+        cursor.execute(query_risk_high)
+        results_high = cursor.fetchall()
+        df_high = pd.DataFrame(results_high, columns=['vendor', 'device_type_family', 'model', 'count'])
+        
+        cursor.execute(query_risk_medium)
+        results_medium = cursor.fetchall()
+        df_medium = pd.DataFrame(results_medium, columns=['vendor', 'device_type_family', 'model', 'count'])
+        
+        return {
+            "risk_dist": df_risk,
+            "risk_critical": df_critical,
+            "risk_high": df_high,
+            "risk_medium": df_medium
+        }
+        
+    except Exception as e:
+        st.error(f"Error querying Risk stats: {str(e)}")
+        return {
+            "risk_dist": pd.DataFrame(),
+            "risk_critical": pd.DataFrame(),
+            "risk_high": pd.DataFrame(),
+            "risk_medium": pd.DataFrame()
+        }
+    finally:
+        if cursor:
+            try: cursor.close()
+            except: pass
+
+def build_where_clause(
+    region, vertical, organization, industry, account_status, vendor, device_category,
+    device_type_family, device_subcategory, model, os_name, mac_oui
+):
+    """Helper to build WHERE clause for both stat functions."""
+    def escape_sql_string(value: str) -> str:
+        if value is None: return ""
+        return str(value).replace("'", "''")
+    
+    where_conditions = []
+    
+    if region is not None:
+        where_conditions.append(f"region = '{escape_sql_string(region)}'")
+    if vertical is not None:
+        where_conditions.append(f"vertical = '{escape_sql_string(vertical)}'")
+    if organization is not None:
+        where_conditions.append(f"organization = '{escape_sql_string(organization)}'")
+    if industry is not None:
+        where_conditions.append(f"industry = '{escape_sql_string(industry)}'")
+    if account_status is not None:
+        where_conditions.append(f"account_status = '{escape_sql_string(account_status)}'")
+    if vendor is not None:
+        where_conditions.append(f"vendor = '{escape_sql_string(vendor)}'")
+    if device_category is not None:
+        where_conditions.append(f"device_category = '{escape_sql_string(device_category)}'")
+    if device_type_family is not None:
+        where_conditions.append(f"device_type_family = '{escape_sql_string(device_type_family)}'")
+    if device_subcategory is not None:
+        where_conditions.append(f"device_subcategory = '{escape_sql_string(device_subcategory)}'")
+    if model is not None:
+        where_conditions.append(f"model = '{escape_sql_string(model)}'")
+    if os_name is not None:
+        where_conditions.append(f"os_name = '{escape_sql_string(os_name)}'")
+    if mac_oui is not None:
+        where_conditions.append(f"array_contains(mac_oui_list, '{escape_sql_string(mac_oui)}')")
+    
+    return " AND ".join(where_conditions) if where_conditions else "1=1"
+
+# Sidebar filters
+st.sidebar.header("Filters")
+
+# Create a placeholder for filter errors that we can clear later
+filter_error_container = st.sidebar.empty()
+
+# Get filter options
+filter_options_result = get_filter_options()
+
+if filter_options_result is None:
+    # Show error if failed
+    filter_error_container.error("⚠️ Filter options failed to load. Using defaults.")
+    filter_options = {key: [] for key in [
+        'region', 'vertical', 'organization', 'industry', 
+        'vendor', 'device_category', 'device_type_family', 
+        'device_subcategory', 'model', 'os_name', 'mac_oui'
+    ]}
+else:
+    # Clear any previous error if successful
+    filter_error_container.empty()
+    filter_options = filter_options_result
+
+# Use a form to batch filter changes - form only triggers rerun on submit
+with st.sidebar.form("filters_form"):
+    st.subheader("Organization Filters")
+    # Create filter dropdowns inside the form
+    selected_region = st.selectbox(
+        "Region",
+        options=[None] + filter_options.get('region', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_vertical = st.selectbox(
+        "Vertical",
+        options=[None] + filter_options.get('vertical', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_organization = st.selectbox(
+        "Organization",
+        options=[None] + filter_options.get('organization', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_industry = st.selectbox(
+        "Industry",
+        options=[None] + filter_options.get('industry', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_account_status = st.selectbox(
+        "Account Status",
+        options=[None] + filter_options.get('account_status', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    st.markdown("---")
+    st.subheader("Device Filters")
+    
+    selected_device_category = st.selectbox(
+        "Device Category",
+        options=[None] + filter_options.get('device_category', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_device_subcategory = st.selectbox(
+        "Device Subcategory",
+        options=[None] + filter_options.get('device_subcategory', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_device_type_family = st.selectbox(
+        "Device Type Family",
+        options=[None] + filter_options.get('device_type_family', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_vendor = st.selectbox(
+        "Vendor",
+        options=[None] + filter_options.get('vendor', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_model = st.selectbox(
+        "Model",
+        options=[None] + filter_options.get('model', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_os_name = st.selectbox(
+        "OS Name",
+        options=[None] + filter_options.get('os_name', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    selected_mac_oui = st.selectbox(
+        "MAC OUI",
+        options=[None] + filter_options.get('mac_oui', []),
+        format_func=lambda x: "All" if x is None else x
+    )
+    
+    # Submit button triggers the query
+    submitted = st.form_submit_button("🔄 Apply Filters & Refresh", type="primary", use_container_width=True)
+
+# Initialize session state to store last query result
+if 'last_stats' not in st.session_state:
+    st.session_state.last_stats = {
+        "top_devices": pd.DataFrame(), 
+        "subcategory": pd.DataFrame(),
+        "category": pd.DataFrame(),
+        "risk_dist": pd.DataFrame(),
+        "risk_critical": pd.DataFrame(),
+        "risk_high": pd.DataFrame(),
+        "risk_medium": pd.DataFrame()
+    }
+if 'last_filters' not in st.session_state:
+    st.session_state.last_filters = {}
+if 'initial_load_done' not in st.session_state:
+    st.session_state.initial_load_done = False
+
+# Auto-load on first run when all filters are "All" (None)
+all_filters_all = (
+    selected_region is None and
+    selected_vertical is None and
+    selected_organization is None and
+    selected_industry is None and
+    selected_account_status is None and
+    selected_vendor is None and
+    selected_device_category is None and
+    selected_device_type_family is None and
+    selected_device_subcategory is None and
+    selected_model is None and
+    selected_os_name is None and
+    selected_mac_oui is None
+)
+
+# Query on form submit OR on initial load when all filters are "All"
+should_query = submitted or (not st.session_state.initial_load_done and all_filters_all)
+
+if should_query:
+    # Store current filter values
+    current_filters = {
+        'region': selected_region,
+        'vertical': selected_vertical,
+        'organization': selected_organization,
+        'industry': selected_industry,
+        'account_status': selected_account_status,
+        'vendor': selected_vendor,
+        'device_category': selected_device_category,
+        'device_type_family': selected_device_type_family,
+        'device_subcategory': selected_device_subcategory,
+        'model': selected_model,
+        'os_name': selected_os_name,
+        'mac_oui': selected_mac_oui
+    }
+    st.session_state.last_filters = current_filters
+    
+    # Mark initial load as done
+    if not st.session_state.initial_load_done:
+        st.session_state.initial_load_done = True
+    
+    # Update state with Global stats
+    with st.spinner("Loading Global data..."):
+        stats_global = get_global_stats(
+            region=selected_region,
+            vertical=selected_vertical,
+            organization=selected_organization,
+            industry=selected_industry,
+            account_status=selected_account_status,
+            vendor=selected_vendor,
+            device_category=selected_device_category,
+            device_type_family=selected_device_type_family,
+            device_subcategory=selected_device_subcategory,
+            model=selected_model,
+            os_name=selected_os_name,
+            mac_oui=selected_mac_oui
+        )
+        st.session_state.last_stats.update(stats_global)
+    
+    # Update state with Risk stats (runs after Global is done)
+    with st.spinner("Loading Risk data..."):
+        stats_risk = get_risk_stats(
+            region=selected_region,
+            vertical=selected_vertical,
+            organization=selected_organization,
+            industry=selected_industry,
+            account_status=selected_account_status,
+            vendor=selected_vendor,
+            device_category=selected_device_category,
+            device_type_family=selected_device_type_family,
+            device_subcategory=selected_device_subcategory,
+            model=selected_model,
+            os_name=selected_os_name,
+            mac_oui=selected_mac_oui
+        )
+        st.session_state.last_stats.update(stats_risk)
+
+# Get current stats (either newly fetched or from last run)
+stats = st.session_state.last_stats
+df_top = stats.get("top_devices", pd.DataFrame())
+df_sub = stats.get("subcategory", pd.DataFrame())
+df_cat = stats.get("category", pd.DataFrame())
+df_risk = stats.get("risk_dist", pd.DataFrame())
+df_critical = stats.get("risk_critical", pd.DataFrame())
+df_high = stats.get("risk_high", pd.DataFrame())
+df_medium = stats.get("risk_medium", pd.DataFrame())
+
+# Show data status (based on Global stats)
+data_loaded = not df_top.empty or not df_sub.empty or not df_cat.empty
+
+if not data_loaded:
+    if not should_query and (not st.session_state.last_stats["top_devices"].empty):
+        # Show last result with info message
+        st.info("💡 Adjust filters and click 'Apply Filters & Refresh' to update the dashboard.")
+    elif should_query:
+        st.warning("No data found for the selected filters.")
+        st.stop()
+    else:
+        st.info("👆 Select filters and click 'Apply Filters & Refresh' to load data.")
+        st.stop()
+else:
+    # Show success message with filter info
+    active_filters = sum([
+        selected_region is not None,
+        selected_vertical is not None,
+        selected_organization is not None,
+        selected_industry is not None,
+        selected_vendor is not None,
+        selected_device_category is not None,
+        selected_device_type_family is not None,
+        selected_device_subcategory is not None,
+        selected_model is not None,
+        selected_os_name is not None,
+        selected_mac_oui is not None
+    ])
+    
+    record_count_msg = "Dashboard data successfully loaded"
+    if active_filters == 0:
+        st.success(f"{record_count_msg} (All filters: showing all data)")
+    else:
+        st.success(f"{record_count_msg} ({active_filters} filter{'s' if active_filters > 1 else ''} applied)")
+    
+    # Create Tabs
+    tab_global, tab_risk = st.tabs(["Global", "Risk"])
+    
+    with tab_global:
+        # --- VISUALIZATIONS ---
+        
+        # Create two columns for pie charts
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("Device Category Distribution")
+            if not df_cat.empty:
+                fig = go.Figure(data=[go.Pie(
+                    labels=df_cat['device_category'].tolist(),
+                    values=df_cat['count'].tolist(),
+                    hole=0.3
+                )])
+                fig.update_layout(
+                    height=400,
+                    showlegend=True,
+                    margin=dict(l=20, r=20, t=30, b=20)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No category data available.")
+    
+        with col2:
+            st.subheader("Device Subcategory Distribution")
+            if not df_sub.empty:
+                fig = go.Figure(data=[go.Pie(
+                    labels=df_sub['device_subcategory'].tolist(),
+                    values=df_sub['count'].tolist(),
+                    hole=0.3
+                )])
+                fig.update_layout(
+                    height=400,
+                    showlegend=True,
+                    margin=dict(l=20, r=20, t=30, b=20)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No subcategory data available.")
+    
+        # Table for top vendor, device_type_family, model
+        st.divider()
+        st.subheader("Top Devices by Vendor, Device Type Family, and Model")
+        
+        if not df_top.empty:
+            # Display table (already aggregated and sorted from SQL)
+            st.dataframe(
+                df_top,
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("No data available with all three fields (vendor, device_type_family, model) populated.")
+
+    with tab_risk:
+        st.subheader("Risk Score Distribution")
+        
+        if not df_risk.empty:
+            # Color map for risk scores
+            risk_colors = {
+                'Critical': '#FF4B4B',  # Red
+                'High': '#FFA500',      # Orange
+                'Medium': '#FFFF00',    # Yellow
+                'Low': '#00FF00',       # Green
+                'None': '#808080'       # Grey
+            }
+            colors = [risk_colors.get(x, '#808080') for x in df_risk['risk_score']]
+            
+            fig = go.Figure(data=[go.Pie(
+                labels=df_risk['risk_score'].tolist(),
+                values=df_risk['count'].tolist(),
+                hole=0.3,
+                marker=dict(colors=colors)
+            )])
+            fig.update_layout(
+                height=400,
+                showlegend=True,
+                margin=dict(l=20, r=20, t=30, b=20)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No risk score data available.")
+        
+        st.divider()
+        
+        # Stacked tables for risk devices
+        st.markdown("### 🔴 Critical Risk Devices")
+        if not df_critical.empty:
+            st.dataframe(df_critical, use_container_width=True, hide_index=True)
+        else:
+            st.info("No Critical risk devices found.")
+            
+        st.markdown("### 🟠 High Risk Devices")
+        if not df_high.empty:
+            st.dataframe(df_high, use_container_width=True, hide_index=True)
+        else:
+            st.info("No High risk devices found.")
+            
+        st.markdown("### 🟡 Medium Risk Devices")
+        if not df_medium.empty:
+            st.dataframe(df_medium, use_container_width=True, hide_index=True)
+        else:
+            st.info("No Medium risk devices found.")
