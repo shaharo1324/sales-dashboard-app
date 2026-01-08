@@ -1,0 +1,26 @@
+bundle:
+  name: sales-dashboard-test
+
+# FIX 1: Use 'sync' to tell Databricks which CODE files to upload
+sync:
+  include:
+    - app.py
+    - requirements.txt
+
+# FIX 2: All infrastructure must be under 'resources'
+resources:
+  apps:
+    sales_dashboard:
+      name: "sales_dashboard"
+      
+      # This points to where your code is ('.' means current folder)
+      source:
+        path: .
+        
+      # The entry point command
+      command: ["streamlit", "run", "app.py"]
+
+targets:
+  prod:
+    workspace:
+      host: https://adb-xxxxx.x.azuredatabricks.net
