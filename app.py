@@ -5,6 +5,7 @@ from databricks.sdk.core import Config
 from typing import Any, Dict, List, Optional
 import os
 import plotly.graph_objects as go
+import math 
 
 # Testing Automatic Deployment
 
@@ -55,13 +56,35 @@ def get_connection() -> Any:
         credentials_provider=lambda: cfg.authenticate,
     )
 
+def execute_sql_query(query: str) -> List[Any]:
+    """Executes a SQL query with automatic retry on connection failure."""
+    max_retries = 1
+    
+    for attempt in range(max_retries + 1):
+        cursor = None
+        try:
+            connection = get_connection()
+            cursor = connection.cursor()
+            cursor.execute(query)
+            result = cursor.fetchall()
+            return result
+        except Exception as e:
+            if attempt < max_retries:
+                print(f"Database error (Attempt {attempt+1}/{max_retries+1}): {str(e)}. Retrying...")
+                get_connection.clear()
+            else:
+                raise e
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except:
+                    pass
+
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def get_filter_options() -> Optional[Dict[str, List[str]]]:
     """Fetch unique values for all filter fields using pre-calculated tables."""
     try:
-        connection = get_connection()
-        cursor = connection.cursor()
-        
         # Query 1: Organization filters
         query_org = """
         SELECT
@@ -72,9 +95,7 @@ def get_filter_options() -> Optional[Dict[str, List[str]]]:
             account_status
         FROM `s3-write-bucket`.sales_dashboard.organization_filters
         """
-        
-        cursor.execute(query_org)
-        results_org = cursor.fetchall()
+        results_org = execute_sql_query(query_org)
         
         # Query 2: Device filters
         query_device = """
@@ -88,10 +109,7 @@ def get_filter_options() -> Optional[Dict[str, List[str]]]:
             mac_oui
         FROM `s3-write-bucket`.sales_dashboard.device_filters
         """
-        
-        cursor.execute(query_device)
-        results_device = cursor.fetchall()
-        cursor.close()
+        results_device = execute_sql_query(query_device)
         
         # Extract unique values for each field
         filter_options = {
@@ -134,11 +152,7 @@ def get_global_stats(
     mac_oui: Optional[str] = None
 ) -> Dict[str, pd.DataFrame]:
     """Fetch aggregated statistics for the Global tab."""
-    cursor = None
     try:
-        connection = get_connection()
-        cursor = connection.cursor()
-        
         # Build WHERE clause
         where_clause = build_where_clause(
             region, vertical, organization, industry, account_status, vendor, device_category,
@@ -186,22 +200,52 @@ def get_global_stats(
         ORDER BY count DESC
         """
         
-        cursor.execute(query_top_devices)
-        results_top = cursor.fetchall()
+        # Query 4: OS Name Distribution (Aggregated)
+        query_os = f"""
+        SELECT 
+            os_name,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND os_name IS NOT NULL
+        GROUP BY os_name
+        ORDER BY count DESC
+        """
+
+        # Query 5: Top 20 Vendors (Aggregated)
+        query_vendor = f"""
+        SELECT 
+            vendor,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND vendor IS NOT NULL
+        GROUP BY vendor
+        ORDER BY count DESC
+        LIMIT 20
+        """
+        
+        results_top = execute_sql_query(query_top_devices)
         df_top = pd.DataFrame(results_top, columns=['vendor', 'device_type_family', 'model', 'count'])
         
-        cursor.execute(query_subcategory)
-        results_sub = cursor.fetchall()
+        results_sub = execute_sql_query(query_subcategory)
         df_sub = pd.DataFrame(results_sub, columns=['device_subcategory', 'count'])
         
-        cursor.execute(query_category)
-        results_cat = cursor.fetchall()
+        results_cat = execute_sql_query(query_category)
         df_cat = pd.DataFrame(results_cat, columns=['device_category', 'count'])
+        
+        results_os = execute_sql_query(query_os)
+        df_os = pd.DataFrame(results_os, columns=['os_name', 'count'])
+
+        results_vendor = execute_sql_query(query_vendor)
+        df_vendor = pd.DataFrame(results_vendor, columns=['vendor', 'count'])
         
         return {
             "top_devices": df_top,
             "subcategory": df_sub,
-            "category": df_cat
+            "category": df_cat,
+            "os_dist": df_os,
+            "vendor_dist": df_vendor
         }
         
     except Exception as e:
@@ -209,12 +253,10 @@ def get_global_stats(
         return {
             "top_devices": pd.DataFrame(),
             "subcategory": pd.DataFrame(),
-            "category": pd.DataFrame()
+            "category": pd.DataFrame(),
+            "os_dist": pd.DataFrame(),
+            "vendor_dist": pd.DataFrame()
         }
-    finally:
-        if cursor:
-            try: cursor.close()
-            except: pass
 
 @st.cache_data
 def get_risk_stats(
@@ -232,11 +274,7 @@ def get_risk_stats(
     mac_oui: Optional[str] = None
 ) -> Dict[str, pd.DataFrame]:
     """Fetch aggregated statistics for the Risk tab."""
-    cursor = None
     try:
-        connection = get_connection()
-        cursor = connection.cursor()
-        
         # Build WHERE clause
         where_clause = build_where_clause(
             region, vertical, organization, industry, account_status, vendor, device_category,
@@ -309,20 +347,16 @@ def get_risk_stats(
         LIMIT 100
         """
         
-        cursor.execute(query_risk_dist)
-        results_risk = cursor.fetchall()
+        results_risk = execute_sql_query(query_risk_dist)
         df_risk = pd.DataFrame(results_risk, columns=['risk_score', 'count'])
         
-        cursor.execute(query_risk_critical)
-        results_critical = cursor.fetchall()
+        results_critical = execute_sql_query(query_risk_critical)
         df_critical = pd.DataFrame(results_critical, columns=['vendor', 'device_type_family', 'model', 'count'])
         
-        cursor.execute(query_risk_high)
-        results_high = cursor.fetchall()
+        results_high = execute_sql_query(query_risk_high)
         df_high = pd.DataFrame(results_high, columns=['vendor', 'device_type_family', 'model', 'count'])
         
-        cursor.execute(query_risk_medium)
-        results_medium = cursor.fetchall()
+        results_medium = execute_sql_query(query_risk_medium)
         df_medium = pd.DataFrame(results_medium, columns=['vendor', 'device_type_family', 'model', 'count'])
         
         return {
@@ -340,10 +374,6 @@ def get_risk_stats(
             "risk_high": pd.DataFrame(),
             "risk_medium": pd.DataFrame()
         }
-    finally:
-        if cursor:
-            try: cursor.close()
-            except: pass
 
 def build_where_clause(
     region, vertical, organization, industry, account_status, vendor, device_category,
@@ -493,6 +523,8 @@ if 'last_stats' not in st.session_state:
         "top_devices": pd.DataFrame(), 
         "subcategory": pd.DataFrame(),
         "category": pd.DataFrame(),
+        "os_dist": pd.DataFrame(),
+        "vendor_dist": pd.DataFrame(),
         "risk_dist": pd.DataFrame(),
         "risk_critical": pd.DataFrame(),
         "risk_high": pd.DataFrame(),
@@ -585,6 +617,8 @@ stats = st.session_state.last_stats
 df_top = stats.get("top_devices", pd.DataFrame())
 df_sub = stats.get("subcategory", pd.DataFrame())
 df_cat = stats.get("category", pd.DataFrame())
+df_os = stats.get("os_dist", pd.DataFrame())
+df_vendor = stats.get("vendor_dist", pd.DataFrame())
 df_risk = stats.get("risk_dist", pd.DataFrame())
 df_critical = stats.get("risk_critical", pd.DataFrame())
 df_high = stats.get("risk_high", pd.DataFrame())
@@ -667,7 +701,118 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No subcategory data available.")
-    
+        
+        # OS Distribution Treemap
+        st.divider()
+        st.subheader("OS Distribution")
+        if not df_os.empty:
+            fig = go.Figure(go.Treemap(
+                labels = df_os['os_name'].tolist(),
+                parents = [""] * len(df_os),
+                values =  df_os['count'].tolist(),
+                textinfo = "label+value+percent entry",
+                marker=dict(
+                    colors=df_os['count'].tolist(), 
+                    colorscale='Blues',
+                    showscale=True
+                )
+            ))
+            fig.update_layout(height=450, margin=dict(t=0, b=0, l=0, r=0))
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # --- 3 Additional OS Charts (Stacked) ---
+            st.markdown("### 📊 Alternative Views")
+            
+            # 1. Horizontal Bar Chart
+            st.caption("View 1: Horizontal Bar (Ranked)")
+            fig_bar = go.Figure(go.Bar(
+                x=df_os['count'],
+                y=df_os['os_name'],
+                orientation='h',
+                text=df_os['count'],
+                textposition='auto',
+                marker=dict(color=df_os['count'], colorscale='Blues')
+            ))
+            fig_bar.update_layout(
+                yaxis={'categoryorder':'total ascending'}, 
+                height=500,
+                margin=dict(l=0, r=0, t=20, b=0)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+            
+            # 2. Funnel Chart
+            st.divider()
+            st.caption("View 2: Funnel (Dominance Drop-off)")
+            fig_funnel = go.Figure(go.Funnel(
+                y=df_os['os_name'],
+                x=df_os['count'],
+                textinfo="value+percent initial",
+                marker=dict(color=df_os['count'], colorscale='Blues')
+            ))
+            fig_funnel.update_layout(height=500, margin=dict(l=0, r=0, t=20, b=0))
+            st.plotly_chart(fig_funnel, use_container_width=True)
+        
+
+            # 3. Packed Bubble Chart (Spiral Layout)
+            st.divider()
+            st.caption("View 3: Packed Bubble Cloud")
+            
+            # Prepare data for spiral layout
+            df_bubble = df_os.copy()
+            df_bubble = df_bubble.sort_values('count', ascending=False).reset_index(drop=True)
+            
+            # Calculate percentages
+            total_count = df_bubble['count'].sum()
+            df_bubble['percent'] = (df_bubble['count'] / total_count * 100).round(1)
+            
+            # Spiral Coordinates Algorithm
+            # This places the largest bubble in center (0,0) and spirals others out
+            x_coords = []
+            y_coords = []
+            for i in range(len(df_bubble)):
+                angle = 2.4 * i  # Golden angle approximation (radians)
+                radius = 7 * math.sqrt(i)  # Spread factor
+                x_coords.append(radius * math.cos(angle))
+                y_coords.append(radius * math.sin(angle))
+            
+            # Boost small sizes for visibility (Logarithmic-like scaling for visualization)
+            # This ensures small counts are visible bubbles, while large ones are still dominant
+            # We use a base size + scaled count
+            base_size = df_bubble['count'].max() * 0.05
+            visual_sizes = df_bubble['count'] + base_size
+            
+            fig_bubble = go.Figure(go.Scatter(
+                x=x_coords,
+                y=y_coords,
+                mode='markers+text',
+                marker=dict(
+                    size=visual_sizes,
+                    sizemode='area',
+                    # Larger sizeref = smaller bubbles. We lower it to make bubbles bigger.
+                    sizeref=2.0 * visual_sizes.max() / (120**2), 
+                    color=df_bubble.index, # Use Index (Integers) for colorscale
+                    colorscale='Turbo', # Vibrant, varied scale
+                    showscale=False
+                ),
+                text=[f"{row['os_name']}<br>{row['percent']}%" for _, row in df_bubble.iterrows()],
+                textposition="middle center",
+                textfont=dict(color='white', size=10, weight='bold'), # Ensure text is readable
+                hoverinfo='text',
+                hovertext=[f"{row['os_name']}: {row['count']} ({row['percent']}%)" for _, row in df_bubble.iterrows()]
+            ))
+            
+            fig_bubble.update_layout(
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                height=600,
+                margin=dict(l=0, r=0, t=20, b=0),
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
+            st.plotly_chart(fig_bubble, use_container_width=True)
+            
+        else:
+            st.info("No OS data available.")
+
         # Table for top vendor, device_type_family, model
         st.divider()
         st.subheader("Top Devices by Vendor, Device Type Family, and Model")
@@ -681,6 +826,25 @@ else:
             )
         else:
             st.info("No data available with all three fields (vendor, device_type_family, model) populated.")
+
+        # Top 20 Vendors Pie Chart
+        st.divider()
+        st.subheader("Top 20 Vendors Distribution")
+        
+        if not df_vendor.empty:
+            fig_vendor = go.Figure(data=[go.Pie(
+                labels=df_vendor['vendor'].tolist(),
+                values=df_vendor['count'].tolist(),
+                hole=0.4
+            )])
+            fig_vendor.update_layout(
+                height=500,
+                showlegend=True,
+                margin=dict(t=0, b=0, l=0, r=0)
+            )
+            st.plotly_chart(fig_vendor, use_container_width=True)
+        else:
+            st.info("No vendor data available.")
 
     with tab_risk:
         st.subheader("Risk Score Distribution")
