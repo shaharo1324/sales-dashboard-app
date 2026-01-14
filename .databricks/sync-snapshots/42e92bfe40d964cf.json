@@ -4,7 +4,7 @@
   "remote_path": "/Workspace/Users/shahar.o@claroty.com/databricks_apps/sales-dashboard-test_2026_01_05-12_21/streamlit-hello-world-app",
   "last_modified_times": {
     ".github/workflows/deploy.yml": "2026-01-08T16:33:26.0321643+02:00",
-    "app.py": "2026-01-08T19:14:41.7862373+02:00",
+    "app.py": "2026-01-12T11:55:55.8984353+02:00",
     "app.yaml": "2026-01-05T14:26:04.4540481+02:00",
     "databricks_backup.yml": "2026-01-08T17:51:19.9885132+02:00",
     "requirements.txt": "2026-01-08T18:31:03.630106+02:00"
