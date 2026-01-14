@@ -761,10 +761,10 @@ else:
             # Sort by percentage descending
             df_sources_display = df_sources_display.sort_values('percentage', ascending=True)
             
-            # Assign distinct colors to each bar (softer, starting from blue hues)
+            # Assign distinct colors to each bar (softer rainbow)
             num_sources = len(df_sources_display)
             colors = [
-                f'hsl({int(200 + i * 300 / max(num_sources, 1))}, 50%, 50%)' 
+                f'hsl({int(i * 360 / num_sources)}, 55%, 45%)' 
                 for i in range(num_sources)
             ]
             
@@ -782,9 +782,10 @@ else:
             fig_sources.update_layout(
                 xaxis_title="% of Devices",
                 yaxis_title="",
-                height=max(300, len(df_sources_display) * 40),  # Dynamic height based on number of sources
+                height=max(300, len(df_sources_display) * 50),  # Dynamic height based on number of sources
                 margin=dict(l=0, r=0, t=20, b=40),
-                xaxis=dict(range=[0, 105])  # Allow some room for 100%+ labels
+                xaxis=dict(range=[0, 105]),  # Allow some room for 100%+ labels
+                yaxis=dict(tickfont=dict(size=14))  # Larger font for source labels
             )
             st.plotly_chart(fig_sources, use_container_width=True)
         else:
