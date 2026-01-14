@@ -225,6 +225,13 @@ def get_global_stats(
         LIMIT 20
         """
         
+        # Query 6: Total Device Count
+        query_total = f"""
+        SELECT COUNT(*) as total_count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+        """
+        
         results_top = execute_sql_query(query_top_devices)
         df_top = pd.DataFrame(results_top, columns=['vendor', 'device_type_family', 'model', 'count'])
         
@@ -240,12 +247,16 @@ def get_global_stats(
         results_vendor = execute_sql_query(query_vendor)
         df_vendor = pd.DataFrame(results_vendor, columns=['vendor', 'count'])
         
+        results_total = execute_sql_query(query_total)
+        total_devices = results_total[0][0] if results_total else 0
+        
         return {
             "top_devices": df_top,
             "subcategory": df_sub,
             "category": df_cat,
             "os_dist": df_os,
-            "vendor_dist": df_vendor
+            "vendor_dist": df_vendor,
+            "total_devices": total_devices
         }
         
     except Exception as e:
@@ -255,7 +266,8 @@ def get_global_stats(
             "subcategory": pd.DataFrame(),
             "category": pd.DataFrame(),
             "os_dist": pd.DataFrame(),
-            "vendor_dist": pd.DataFrame()
+            "vendor_dist": pd.DataFrame(),
+            "total_devices": 0
         }
 
 @st.cache_data
@@ -525,6 +537,7 @@ if 'last_stats' not in st.session_state:
         "category": pd.DataFrame(),
         "os_dist": pd.DataFrame(),
         "vendor_dist": pd.DataFrame(),
+        "total_devices": 0,
         "risk_dist": pd.DataFrame(),
         "risk_critical": pd.DataFrame(),
         "risk_high": pd.DataFrame(),
@@ -619,6 +632,7 @@ df_sub = stats.get("subcategory", pd.DataFrame())
 df_cat = stats.get("category", pd.DataFrame())
 df_os = stats.get("os_dist", pd.DataFrame())
 df_vendor = stats.get("vendor_dist", pd.DataFrame())
+total_devices = stats.get("total_devices", 0)
 df_risk = stats.get("risk_dist", pd.DataFrame())
 df_critical = stats.get("risk_critical", pd.DataFrame())
 df_high = stats.get("risk_high", pd.DataFrame())
@@ -665,6 +679,13 @@ else:
     with tab_global:
         # --- VISUALIZATIONS ---
         
+        # Total Device Count Metric
+        st.metric(
+            label="📊 Total Devices",
+            value=f"{total_devices:,}"
+        )
+        st.divider()
+        
         # Create two columns for pie charts
         col1, col2 = st.columns(2)
         
@@ -702,60 +723,10 @@ else:
             else:
                 st.info("No subcategory data available.")
         
-        # OS Distribution Treemap
+        # OS Distribution - Packed Bubble Chart
         st.divider()
         st.subheader("OS Distribution")
         if not df_os.empty:
-            fig = go.Figure(go.Treemap(
-                labels = df_os['os_name'].tolist(),
-                parents = [""] * len(df_os),
-                values =  df_os['count'].tolist(),
-                textinfo = "label+value+percent entry",
-                marker=dict(
-                    colors=df_os['count'].tolist(), 
-                    colorscale='Blues',
-                    showscale=True
-                )
-            ))
-            fig.update_layout(height=450, margin=dict(t=0, b=0, l=0, r=0))
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # --- 3 Additional OS Charts (Stacked) ---
-            st.markdown("### 📊 Alternative Views")
-            
-            # 1. Horizontal Bar Chart
-            st.caption("View 1: Horizontal Bar (Ranked)")
-            fig_bar = go.Figure(go.Bar(
-                x=df_os['count'],
-                y=df_os['os_name'],
-                orientation='h',
-                text=df_os['count'],
-                textposition='auto',
-                marker=dict(color=df_os['count'], colorscale='Blues')
-            ))
-            fig_bar.update_layout(
-                yaxis={'categoryorder':'total ascending'}, 
-                height=500,
-                margin=dict(l=0, r=0, t=20, b=0)
-            )
-            st.plotly_chart(fig_bar, use_container_width=True)
-            
-            # 2. Funnel Chart
-            st.divider()
-            st.caption("View 2: Funnel (Dominance Drop-off)")
-            fig_funnel = go.Figure(go.Funnel(
-                y=df_os['os_name'],
-                x=df_os['count'],
-                textinfo="value+percent initial",
-                marker=dict(color=df_os['count'], colorscale='Blues')
-            ))
-            fig_funnel.update_layout(height=500, margin=dict(l=0, r=0, t=20, b=0))
-            st.plotly_chart(fig_funnel, use_container_width=True)
-        
-
-            # 3. Packed Bubble Chart (Spiral Layout)
-            st.divider()
-            st.caption("View 3: Packed Bubble Cloud")
             
             # Prepare data for spiral layout
             df_bubble = df_os.copy()
