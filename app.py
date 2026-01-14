@@ -701,10 +701,15 @@ else:
     with tab_global:
         # --- VISUALIZATIONS ---
         
-        # Total Device Count Metric
-        st.metric(
-            label="📊 Total Devices",
-            value=f"{total_devices:,}"
+        # Total Device Count Metric - Centered with larger font
+        st.markdown(
+            f"""
+            <div style="text-align: center; padding: 20px 0;">
+                <p style="font-size: 1.2rem; color: #888; margin-bottom: 5px;">📊 Total Devices</p>
+                <p style="font-size: 3rem; font-weight: bold; margin: 0;">{total_devices:,}</p>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
         st.divider()
         
@@ -747,7 +752,7 @@ else:
         
         # Source Coverage - Horizontal Bar Chart
         st.divider()
-        st.subheader("Device Source Coverage")
+        st.subheader("Data Sources Percentages")
         if not df_sources.empty and total_devices > 0:
             # Calculate percentage of devices that have each source
             df_sources_display = df_sources.copy()
@@ -756,10 +761,10 @@ else:
             # Sort by percentage descending
             df_sources_display = df_sources_display.sort_values('percentage', ascending=True)
             
-            # Assign distinct colors to each bar
+            # Assign distinct colors to each bar (softer, starting from blue hues)
             num_sources = len(df_sources_display)
             colors = [
-                f'hsl({int(i * 360 / num_sources)}, 70%, 55%)' 
+                f'hsl({int(200 + i * 300 / max(num_sources, 1))}, 50%, 50%)' 
                 for i in range(num_sources)
             ]
             
