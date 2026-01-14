@@ -232,6 +232,21 @@ def get_global_stats(
         WHERE {where_clause}
         """
         
+        # Query 7: Source Coverage (devices per source from all_seen_sources array)
+        query_sources = f"""
+        SELECT 
+            source,
+            COUNT(*) as device_count
+        FROM (
+            SELECT DISTINCT device_uid, exploded_source as source
+            FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+            LATERAL VIEW explode(all_seen_sources) AS exploded_source
+            WHERE {where_clause}
+        )
+        GROUP BY source
+        ORDER BY device_count DESC
+        """
+        
         results_top = execute_sql_query(query_top_devices)
         df_top = pd.DataFrame(results_top, columns=['vendor', 'device_type_family', 'model', 'count'])
         
@@ -250,13 +265,17 @@ def get_global_stats(
         results_total = execute_sql_query(query_total)
         total_devices = results_total[0][0] if results_total else 0
         
+        results_sources = execute_sql_query(query_sources)
+        df_sources = pd.DataFrame(results_sources, columns=['source', 'device_count'])
+        
         return {
             "top_devices": df_top,
             "subcategory": df_sub,
             "category": df_cat,
             "os_dist": df_os,
             "vendor_dist": df_vendor,
-            "total_devices": total_devices
+            "total_devices": total_devices,
+            "source_coverage": df_sources
         }
         
     except Exception as e:
@@ -267,7 +286,8 @@ def get_global_stats(
             "category": pd.DataFrame(),
             "os_dist": pd.DataFrame(),
             "vendor_dist": pd.DataFrame(),
-            "total_devices": 0
+            "total_devices": 0,
+            "source_coverage": pd.DataFrame()
         }
 
 @st.cache_data
@@ -538,6 +558,7 @@ if 'last_stats' not in st.session_state:
         "os_dist": pd.DataFrame(),
         "vendor_dist": pd.DataFrame(),
         "total_devices": 0,
+        "source_coverage": pd.DataFrame(),
         "risk_dist": pd.DataFrame(),
         "risk_critical": pd.DataFrame(),
         "risk_high": pd.DataFrame(),
@@ -633,6 +654,7 @@ df_cat = stats.get("category", pd.DataFrame())
 df_os = stats.get("os_dist", pd.DataFrame())
 df_vendor = stats.get("vendor_dist", pd.DataFrame())
 total_devices = stats.get("total_devices", 0)
+df_sources = stats.get("source_coverage", pd.DataFrame())
 df_risk = stats.get("risk_dist", pd.DataFrame())
 df_critical = stats.get("risk_critical", pd.DataFrame())
 df_high = stats.get("risk_high", pd.DataFrame())
@@ -722,6 +744,46 @@ else:
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No subcategory data available.")
+        
+        # Source Coverage - Horizontal Bar Chart
+        st.divider()
+        st.subheader("Device Source Coverage")
+        if not df_sources.empty and total_devices > 0:
+            # Calculate percentage of devices that have each source
+            df_sources_display = df_sources.copy()
+            df_sources_display['percentage'] = (df_sources_display['device_count'] / total_devices * 100).round(1)
+            
+            # Sort by percentage descending
+            df_sources_display = df_sources_display.sort_values('percentage', ascending=True)
+            
+            # Assign distinct colors to each bar
+            num_sources = len(df_sources_display)
+            colors = [
+                f'hsl({int(i * 360 / num_sources)}, 70%, 55%)' 
+                for i in range(num_sources)
+            ]
+            
+            fig_sources = go.Figure(go.Bar(
+                x=df_sources_display['percentage'],
+                y=df_sources_display['source'],
+                orientation='h',
+                text=[f"{p}% ({c:,} devices)" for p, c in zip(df_sources_display['percentage'], df_sources_display['device_count'])],
+                textposition='auto',
+                marker=dict(
+                    color=colors,
+                    line=dict(color='white', width=1)
+                )
+            ))
+            fig_sources.update_layout(
+                xaxis_title="% of Devices",
+                yaxis_title="",
+                height=max(300, len(df_sources_display) * 40),  # Dynamic height based on number of sources
+                margin=dict(l=0, r=0, t=20, b=40),
+                xaxis=dict(range=[0, 105])  # Allow some room for 100%+ labels
+            )
+            st.plotly_chart(fig_sources, use_container_width=True)
+        else:
+            st.info("No source data available.")
         
         # OS Distribution - Packed Bubble Chart
         st.divider()
