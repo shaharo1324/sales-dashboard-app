@@ -238,7 +238,7 @@ def get_global_stats(
             source,
             COUNT(*) as device_count
         FROM (
-            SELECT DISTINCT device_uid, exploded_source as source
+            SELECT DISTINCT organization, uid, exploded_source as source
             FROM `s3-write-bucket`.sales_dashboard.displayable_devices
             LATERAL VIEW explode(all_seen_sources) AS exploded_source
             WHERE {where_clause}
