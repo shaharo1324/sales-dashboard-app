@@ -45,21 +45,6 @@ st.header("Sales Dashboard")
 
 MAIN_SQL_HTTP_PATH = "/sql/1.0/warehouses/472969065f3aed02"
 
-# Test table access function
-def test_table_access():
-    """Test if the app can access dv_vrm_global table."""
-    try:
-        query = """
-        SELECT count(*) as cnt 
-        FROM `databricks-dwh`.data.dv_vrm_global 
-        WHERE organization = 'uwmc'
-        """
-        result = execute_sql_query(query)
-        count = result[0][0] if result else 0
-        return True, count
-    except Exception as e:
-        return False, str(e)
-
 cfg = Config()
 
 @st.cache_resource
@@ -422,11 +407,92 @@ def get_risk_stats(
             "risk_medium": pd.DataFrame()
         }
 
+@st.cache_data
+def get_vulnerability_stats(
+    region: Optional[str] = None,
+    vertical: Optional[str] = None,
+    organization: Optional[str] = None,
+    industry: Optional[str] = None,
+    account_status: Optional[str] = None,
+    vendor: Optional[str] = None,
+    device_category: Optional[str] = None,
+    device_type_family: Optional[str] = None,
+    device_subcategory: Optional[str] = None,
+    model: Optional[str] = None,
+    os_name: Optional[str] = None,
+    mac_oui: Optional[str] = None
+) -> Dict[str, pd.DataFrame]:
+    """Fetch aggregated statistics for the Vulnerabilities tab.
+    
+    Joins vulnerabilities table with devices table to apply filters,
+    since vulnerabilities table only has (region, organization, device_uid).
+    """
+    try:
+        # Build WHERE clause for devices table (with 'd.' prefix)
+        where_clause = build_where_clause_with_alias(
+            region, vertical, organization, industry, account_status, vendor, device_category,
+            device_type_family, device_subcategory, model, os_name, mac_oui, alias='d'
+        )
+        
+        # Query: Confirmed Vulnerabilities - JOIN with devices to apply filters
+        query_confirmed = f"""
+        SELECT 
+            v.name as advisory_name,
+            v.source_name,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices_vulnerabilities v
+        INNER JOIN `s3-write-bucket`.sales_dashboard.displayable_devices d
+            ON v.region = d.region 
+            AND v.organization = d.organization 
+            AND v.device_uid = d.uid
+        WHERE {where_clause}
+            AND v.effective_relevance = 'Confirmed'
+        GROUP BY v.name, v.source_name
+        ORDER BY count DESC
+        LIMIT 100
+        """
+        
+        # Query: Potentially Relevant Vulnerabilities - JOIN with devices to apply filters
+        query_potential = f"""
+        SELECT 
+            v.name as advisory_name,
+            v.source_name,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices_vulnerabilities v
+        INNER JOIN `s3-write-bucket`.sales_dashboard.displayable_devices d
+            ON v.region = d.region 
+            AND v.organization = d.organization 
+            AND v.device_uid = d.uid
+        WHERE {where_clause}
+            AND v.effective_relevance = 'Potentially Relevant'
+        GROUP BY v.name, v.source_name
+        ORDER BY count DESC
+        LIMIT 100
+        """
+        
+        results_confirmed = execute_sql_query(query_confirmed)
+        df_confirmed = pd.DataFrame(results_confirmed, columns=['advisory_name', 'source_name', 'count'])
+        
+        results_potential = execute_sql_query(query_potential)
+        df_potential = pd.DataFrame(results_potential, columns=['advisory_name', 'source_name', 'count'])
+        
+        return {
+            "vuln_confirmed": df_confirmed,
+            "vuln_potential": df_potential
+        }
+        
+    except Exception as e:
+        st.error(f"Error querying Vulnerability stats: {str(e)}")
+        return {
+            "vuln_confirmed": pd.DataFrame(),
+            "vuln_potential": pd.DataFrame()
+        }
+
 def build_where_clause(
     region, vertical, organization, industry, account_status, vendor, device_category,
     device_type_family, device_subcategory, model, os_name, mac_oui
 ):
-    """Helper to build WHERE clause for both stat functions."""
+    """Helper to build WHERE clause for stat functions."""
     def escape_sql_string(value: str) -> str:
         if value is None: return ""
         return str(value).replace("'", "''")
@@ -460,15 +526,43 @@ def build_where_clause(
     
     return " AND ".join(where_conditions) if where_conditions else "1=1"
 
-# Test Table Access - Collapsible Section
-with st.expander("🔍 Test Table Access (dv_vrm_global)", expanded=False):
-    if st.button("Run Test Query"):
-        with st.spinner("Testing access to databricks-dwh.data.dv_vrm_global..."):
-            success, result = test_table_access()
-            if success:
-                st.success(f"✅ Table accessible! Count for organization='uwmc': **{result:,}** records")
-            else:
-                st.error(f"❌ Failed to access table: {result}")
+def build_where_clause_with_alias(
+    region, vertical, organization, industry, account_status, vendor, device_category,
+    device_type_family, device_subcategory, model, os_name, mac_oui, alias='d'
+):
+    """Helper to build WHERE clause with table alias for JOIN queries."""
+    def escape_sql_string(value: str) -> str:
+        if value is None: return ""
+        return str(value).replace("'", "''")
+    
+    where_conditions = []
+    
+    if region is not None:
+        where_conditions.append(f"{alias}.region = '{escape_sql_string(region)}'")
+    if vertical is not None:
+        where_conditions.append(f"{alias}.vertical = '{escape_sql_string(vertical)}'")
+    if organization is not None:
+        where_conditions.append(f"{alias}.organization = '{escape_sql_string(organization)}'")
+    if industry is not None:
+        where_conditions.append(f"{alias}.industry = '{escape_sql_string(industry)}'")
+    if account_status is not None:
+        where_conditions.append(f"{alias}.account_status = '{escape_sql_string(account_status)}'")
+    if vendor is not None:
+        where_conditions.append(f"{alias}.vendor = '{escape_sql_string(vendor)}'")
+    if device_category is not None:
+        where_conditions.append(f"{alias}.device_category = '{escape_sql_string(device_category)}'")
+    if device_type_family is not None:
+        where_conditions.append(f"{alias}.device_type_family = '{escape_sql_string(device_type_family)}'")
+    if device_subcategory is not None:
+        where_conditions.append(f"{alias}.device_subcategory = '{escape_sql_string(device_subcategory)}'")
+    if model is not None:
+        where_conditions.append(f"{alias}.model = '{escape_sql_string(model)}'")
+    if os_name is not None:
+        where_conditions.append(f"{alias}.os_name = '{escape_sql_string(os_name)}'")
+    if mac_oui is not None:
+        where_conditions.append(f"array_contains({alias}.mac_oui_list, '{escape_sql_string(mac_oui)}')")
+    
+    return " AND ".join(where_conditions) if where_conditions else "1=1"
 
 # Sidebar filters
 st.sidebar.header("Filters")
@@ -587,7 +681,9 @@ if 'last_stats' not in st.session_state:
         "risk_dist": pd.DataFrame(),
         "risk_critical": pd.DataFrame(),
         "risk_high": pd.DataFrame(),
-        "risk_medium": pd.DataFrame()
+        "risk_medium": pd.DataFrame(),
+        "vuln_confirmed": pd.DataFrame(),
+        "vuln_potential": pd.DataFrame()
     }
 if 'last_filters' not in st.session_state:
     st.session_state.last_filters = {}
@@ -670,6 +766,24 @@ if should_query:
             mac_oui=selected_mac_oui
         )
         st.session_state.last_stats.update(stats_risk)
+    
+    # Update state with Vulnerability stats
+    with st.spinner("Loading Vulnerability data..."):
+        stats_vuln = get_vulnerability_stats(
+            region=selected_region,
+            vertical=selected_vertical,
+            organization=selected_organization,
+            industry=selected_industry,
+            account_status=selected_account_status,
+            vendor=selected_vendor,
+            device_category=selected_device_category,
+            device_type_family=selected_device_type_family,
+            device_subcategory=selected_device_subcategory,
+            model=selected_model,
+            os_name=selected_os_name,
+            mac_oui=selected_mac_oui
+        )
+        st.session_state.last_stats.update(stats_vuln)
 
 # Get current stats (either newly fetched or from last run)
 stats = st.session_state.last_stats
@@ -684,6 +798,8 @@ df_risk = stats.get("risk_dist", pd.DataFrame())
 df_critical = stats.get("risk_critical", pd.DataFrame())
 df_high = stats.get("risk_high", pd.DataFrame())
 df_medium = stats.get("risk_medium", pd.DataFrame())
+df_vuln_confirmed = stats.get("vuln_confirmed", pd.DataFrame())
+df_vuln_potential = stats.get("vuln_potential", pd.DataFrame())
 
 # Show data status (based on Global stats)
 data_loaded = not df_top.empty or not df_sub.empty or not df_cat.empty
@@ -721,7 +837,7 @@ else:
         st.success(f"{record_count_msg} ({active_filters} filter{'s' if active_filters > 1 else ''} applied)")
     
     # Create Tabs
-    tab_global, tab_risk = st.tabs(["Global", "Risk"])
+    tab_global, tab_risk, tab_vuln = st.tabs(["Global", "Risk", "Vulnerabilities"])
     
     with tab_global:
         # --- VISUALIZATIONS ---
@@ -959,3 +1075,22 @@ else:
             st.dataframe(df_medium, use_container_width=True, hide_index=True)
         else:
             st.info("No Medium risk devices found.")
+    
+    with tab_vuln:
+        st.subheader("Vulnerability Analysis")
+        
+        # Confirmed Vulnerabilities Table
+        st.markdown("### ✅ Confirmed Vulnerabilities")
+        if not df_vuln_confirmed.empty:
+            st.dataframe(df_vuln_confirmed, use_container_width=True, hide_index=True)
+        else:
+            st.info("No Confirmed vulnerabilities found.")
+        
+        st.divider()
+        
+        # Potentially Relevant Vulnerabilities Table
+        st.markdown("### ⚠️ Potentially Relevant Vulnerabilities")
+        if not df_vuln_potential.empty:
+            st.dataframe(df_vuln_potential, use_container_width=True, hide_index=True)
+        else:
+            st.info("No Potentially Relevant vulnerabilities found.")
