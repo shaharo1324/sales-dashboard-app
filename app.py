@@ -45,6 +45,21 @@ st.header("Sales Dashboard")
 
 MAIN_SQL_HTTP_PATH = "/sql/1.0/warehouses/472969065f3aed02"
 
+# Test table access function
+def test_table_access():
+    """Test if the app can access dv_vrm_global table."""
+    try:
+        query = """
+        SELECT count(*) as cnt 
+        FROM `databricks-dwh`.data.dv_vrm_global 
+        WHERE organization = 'uwmc'
+        """
+        result = execute_sql_query(query)
+        count = result[0][0] if result else 0
+        return True, count
+    except Exception as e:
+        return False, str(e)
+
 cfg = Config()
 
 @st.cache_resource
@@ -444,6 +459,16 @@ def build_where_clause(
         where_conditions.append(f"array_contains(mac_oui_list, '{escape_sql_string(mac_oui)}')")
     
     return " AND ".join(where_conditions) if where_conditions else "1=1"
+
+# Test Table Access - Collapsible Section
+with st.expander("🔍 Test Table Access (dv_vrm_global)", expanded=False):
+    if st.button("Run Test Query"):
+        with st.spinner("Testing access to databricks-dwh.data.dv_vrm_global..."):
+            success, result = test_table_access()
+            if success:
+                st.success(f"✅ Table accessible! Count for organization='uwmc': **{result:,}** records")
+            else:
+                st.error(f"❌ Failed to access table: {result}")
 
 # Sidebar filters
 st.sidebar.header("Filters")
