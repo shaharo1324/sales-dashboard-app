@@ -424,68 +424,79 @@ def get_vulnerability_stats(
 ) -> Dict[str, pd.DataFrame]:
     """Fetch aggregated statistics for the Vulnerabilities tab.
     
-    Joins vulnerabilities table with devices table to apply filters,
-    since vulnerabilities table only has (region, organization, device_uid).
+    Uses a CTE to filter devices ONCE, then joins vulnerabilities to this smaller set.
+    Gets both Confirmed and Potentially Relevant in a single query for efficiency.
+    Also returns total counts for each category.
     """
     try:
-        # Build WHERE clause for devices table (with 'd.' prefix)
-        where_clause = build_where_clause_with_alias(
+        # Build WHERE clause for devices table
+        where_clause = build_where_clause(
             region, vertical, organization, industry, account_status, vendor, device_category,
-            device_type_family, device_subcategory, model, os_name, mac_oui, alias='d'
+            device_type_family, device_subcategory, model, os_name, mac_oui
         )
         
-        # Query: Confirmed Vulnerabilities - JOIN with devices to apply filters
-        query_confirmed = f"""
-        SELECT 
-            v.name as advisory_name,
-            v.source_name,
-            COUNT(*) as count
-        FROM `s3-write-bucket`.sales_dashboard.displayable_devices_vulnerabilities v
-        INNER JOIN `s3-write-bucket`.sales_dashboard.displayable_devices d
-            ON v.region = d.region 
-            AND v.organization = d.organization 
-            AND v.device_uid = d.uid
-        WHERE {where_clause}
-            AND v.effective_relevance = 'Confirmed'
-        GROUP BY v.name, v.source_name
-        ORDER BY count DESC
-        LIMIT 100
+        # Single query using CTE:
+        # 1. filtered_devices: Get device keys matching our filters (scanned ONCE)
+        # 2. vuln_counts: Join vulnerabilities, group by relevance + name + source, rank by count
+        # 3. Select top 100 per effective_relevance category
+        # Also calculates total count per category using SUM() OVER()
+        query_vuln = f"""
+        WITH filtered_devices AS (
+            SELECT region, organization, uid
+            FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+            WHERE {where_clause}
+        ),
+        vuln_counts AS (
+            SELECT 
+                v.effective_relevance,
+                v.name as advisory_name,
+                v.source_name,
+                COUNT(*) as count,
+                ROW_NUMBER() OVER (PARTITION BY v.effective_relevance ORDER BY COUNT(*) DESC) as rn,
+                SUM(COUNT(*)) OVER (PARTITION BY v.effective_relevance) as total_category_count
+            FROM `s3-write-bucket`.sales_dashboard.displayable_devices_vulnerabilities v
+            INNER JOIN filtered_devices fd
+                ON v.region = fd.region 
+                AND v.organization = fd.organization 
+                AND v.device_uid = fd.uid
+            WHERE v.effective_relevance IN ('Confirmed', 'Potentially Relevant')
+            GROUP BY v.effective_relevance, v.name, v.source_name
+        )
+        SELECT effective_relevance, advisory_name, source_name, count, total_category_count
+        FROM vuln_counts
+        WHERE rn <= 100
+        ORDER BY effective_relevance, count DESC
         """
         
-        # Query: Potentially Relevant Vulnerabilities - JOIN with devices to apply filters
-        query_potential = f"""
-        SELECT 
-            v.name as advisory_name,
-            v.source_name,
-            COUNT(*) as count
-        FROM `s3-write-bucket`.sales_dashboard.displayable_devices_vulnerabilities v
-        INNER JOIN `s3-write-bucket`.sales_dashboard.displayable_devices d
-            ON v.region = d.region 
-            AND v.organization = d.organization 
-            AND v.device_uid = d.uid
-        WHERE {where_clause}
-            AND v.effective_relevance = 'Potentially Relevant'
-        GROUP BY v.name, v.source_name
-        ORDER BY count DESC
-        LIMIT 100
-        """
+        results = execute_sql_query(query_vuln)
+        df_all = pd.DataFrame(results, columns=['effective_relevance', 'advisory_name', 'source_name', 'count', 'total_category_count'])
         
-        results_confirmed = execute_sql_query(query_confirmed)
-        df_confirmed = pd.DataFrame(results_confirmed, columns=['advisory_name', 'source_name', 'count'])
+        # Split results by effective_relevance
+        df_confirmed_full = df_all[df_all['effective_relevance'] == 'Confirmed']
+        df_potential_full = df_all[df_all['effective_relevance'] == 'Potentially Relevant']
         
-        results_potential = execute_sql_query(query_potential)
-        df_potential = pd.DataFrame(results_potential, columns=['advisory_name', 'source_name', 'count'])
+        # Extract totals (same value repeated in each row, just take first)
+        total_confirmed = int(df_confirmed_full['total_category_count'].iloc[0]) if not df_confirmed_full.empty else 0
+        total_potential = int(df_potential_full['total_category_count'].iloc[0]) if not df_potential_full.empty else 0
+        
+        # Get just the display columns
+        df_confirmed = df_confirmed_full[['advisory_name', 'source_name', 'count']].reset_index(drop=True)
+        df_potential = df_potential_full[['advisory_name', 'source_name', 'count']].reset_index(drop=True)
         
         return {
             "vuln_confirmed": df_confirmed,
-            "vuln_potential": df_potential
+            "vuln_potential": df_potential,
+            "vuln_confirmed_total": total_confirmed,
+            "vuln_potential_total": total_potential
         }
         
     except Exception as e:
         st.error(f"Error querying Vulnerability stats: {str(e)}")
         return {
             "vuln_confirmed": pd.DataFrame(),
-            "vuln_potential": pd.DataFrame()
+            "vuln_potential": pd.DataFrame(),
+            "vuln_confirmed_total": 0,
+            "vuln_potential_total": 0
         }
 
 def build_where_clause(
@@ -683,7 +694,9 @@ if 'last_stats' not in st.session_state:
         "risk_high": pd.DataFrame(),
         "risk_medium": pd.DataFrame(),
         "vuln_confirmed": pd.DataFrame(),
-        "vuln_potential": pd.DataFrame()
+        "vuln_potential": pd.DataFrame(),
+        "vuln_confirmed_total": 0,
+        "vuln_potential_total": 0
     }
 if 'last_filters' not in st.session_state:
     st.session_state.last_filters = {}
@@ -800,6 +813,8 @@ df_high = stats.get("risk_high", pd.DataFrame())
 df_medium = stats.get("risk_medium", pd.DataFrame())
 df_vuln_confirmed = stats.get("vuln_confirmed", pd.DataFrame())
 df_vuln_potential = stats.get("vuln_potential", pd.DataFrame())
+vuln_confirmed_total = stats.get("vuln_confirmed_total", 0)
+vuln_potential_total = stats.get("vuln_potential_total", 0)
 
 # Show data status (based on Global stats)
 data_loaded = not df_top.empty or not df_sub.empty or not df_cat.empty
@@ -1078,6 +1093,15 @@ else:
     
     with tab_vuln:
         st.subheader("Vulnerability Analysis")
+        
+        # Counters at the top
+        col_confirmed, col_potential = st.columns(2)
+        with col_confirmed:
+            st.metric(label="✅ Confirmed", value=f"{vuln_confirmed_total:,}")
+        with col_potential:
+            st.metric(label="⚠️ Potentially Relevant", value=f"{vuln_potential_total:,}")
+        
+        st.divider()
         
         # Confirmed Vulnerabilities Table
         st.markdown("### ✅ Confirmed Vulnerabilities")
