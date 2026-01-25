@@ -590,6 +590,67 @@ def build_where_clause_with_alias(
     
     return " AND ".join(where_conditions) if where_conditions else "1=1"
 
+def get_uid_examples(
+    region: Optional[str] = None,
+    vertical: Optional[str] = None,
+    organization: Optional[str] = None,
+    industry: Optional[str] = None,
+    account_status: Optional[str] = None,
+    vendor: Optional[str] = None,
+    device_category: Optional[str] = None,
+    device_type_family: Optional[str] = None,
+    device_subcategory: Optional[str] = None,
+    model: Optional[str] = None,
+    os_name: Optional[str] = None,
+    mac_oui: Optional[str] = None
+) -> pd.DataFrame:
+    """Fetch UID examples with best classification data.
+    
+    Returns devices with the most populated classification fields:
+    vendor, model, device_type_family, serial_number, sw_version, hw_version, product_code
+    """
+    try:
+        where_clause = build_where_clause(
+            region, vertical, organization, industry, account_status, vendor, device_category,
+            device_type_family, device_subcategory, model, os_name, mac_oui
+        )
+        
+        # Calculate classification score based on populated fields
+        query = f"""
+        SELECT 
+            organization,
+            uid,
+            vendor,
+            model,
+            device_type_family,
+            serial_number,
+            sw_version,
+            hw_version,
+            product_code,
+            (CASE WHEN vendor IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN model IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN device_type_family IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN serial_number IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN sw_version IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN hw_version IS NOT NULL THEN 1 ELSE 0 END +
+             CASE WHEN product_code IS NOT NULL THEN 1 ELSE 0 END) as classification_score
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+        ORDER BY classification_score DESC, organization, uid
+        LIMIT 50
+        """
+        
+        results = execute_sql_query(query)
+        df = pd.DataFrame(results, columns=[
+            'organization', 'uid', 'vendor', 'model', 'device_type_family',
+            'serial_number', 'sw_version', 'hw_version', 'product_code', 'classification_score'
+        ])
+        return df
+        
+    except Exception as e:
+        st.error(f"Error fetching UID examples: {str(e)}")
+        return pd.DataFrame()
+
 # Sidebar filters
 st.sidebar.header("Filters")
 
@@ -1151,6 +1212,67 @@ else:
             )
         else:
             st.info("No organization data available.")
+        
+        # UID Examples Section - Only shown when vendor or model filter is applied
+        if selected_vendor is not None or selected_model is not None:
+            st.divider()
+            st.subheader("🔍 UID Examples (Best Classification)")
+            st.caption("Shows devices with the most complete classification data (vendor, model, device_type_family, serial_number, sw_version, hw_version, product_code)")
+            
+            # Initialize session state for UID examples
+            if 'uid_examples' not in st.session_state:
+                st.session_state.uid_examples = None
+            if 'uid_examples_filters' not in st.session_state:
+                st.session_state.uid_examples_filters = None
+            
+            # Current filter signature to detect changes
+            current_filter_sig = f"{selected_vendor}_{selected_model}_{selected_region}_{selected_organization}"
+            
+            # Button to fetch examples
+            if st.button("📋 Get UID Examples", key="get_uid_examples"):
+                with st.spinner("Fetching best classified device examples..."):
+                    df_examples = get_uid_examples(
+                        region=selected_region,
+                        vertical=selected_vertical,
+                        organization=selected_organization,
+                        industry=selected_industry,
+                        account_status=selected_account_status,
+                        vendor=selected_vendor,
+                        device_category=selected_device_category,
+                        device_type_family=selected_device_type_family,
+                        device_subcategory=selected_device_subcategory,
+                        model=selected_model,
+                        os_name=selected_os_name,
+                        mac_oui=selected_mac_oui
+                    )
+                    st.session_state.uid_examples = df_examples
+                    st.session_state.uid_examples_filters = current_filter_sig
+            
+            # Display examples if available
+            if st.session_state.uid_examples is not None and not st.session_state.uid_examples.empty:
+                df_display = st.session_state.uid_examples
+                st.success(f"Found {len(df_display)} examples (sorted by classification score)")
+                
+                # Show the table
+                st.dataframe(
+                    df_display,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "classification_score": st.column_config.NumberColumn("Score", help="Number of populated classification fields (max 7)")
+                    }
+                )
+                
+                # CSV Download
+                st.download_button(
+                    label="📥 Download UID Examples (CSV)",
+                    data=df_display.to_csv(index=False),
+                    file_name="uid_examples.csv",
+                    mime="text/csv",
+                    key="download_uid_examples"
+                )
+            elif st.session_state.uid_examples is not None:
+                st.info("No examples found for the current filters.")
 
     with tab_risk:
         st.subheader("Risk Score Distribution")
