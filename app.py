@@ -247,6 +247,18 @@ def get_global_stats(
         ORDER BY device_count DESC
         """
         
+        # Query 8: Organization Distribution (all organizations, for CSV download)
+        query_org_dist = f"""
+        SELECT 
+            organization,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices
+        WHERE {where_clause}
+            AND organization IS NOT NULL
+        GROUP BY organization
+        ORDER BY count DESC
+        """
+        
         results_top = execute_sql_query(query_top_devices)
         df_top = pd.DataFrame(results_top, columns=['vendor', 'device_type_family', 'model', 'count'])
         
@@ -268,6 +280,9 @@ def get_global_stats(
         results_sources = execute_sql_query(query_sources)
         df_sources = pd.DataFrame(results_sources, columns=['source', 'device_count'])
         
+        results_org_dist = execute_sql_query(query_org_dist)
+        df_org_dist = pd.DataFrame(results_org_dist, columns=['organization', 'count'])
+        
         return {
             "top_devices": df_top,
             "subcategory": df_sub,
@@ -275,7 +290,8 @@ def get_global_stats(
             "os_dist": df_os,
             "vendor_dist": df_vendor,
             "total_devices": total_devices,
-            "source_coverage": df_sources
+            "source_coverage": df_sources,
+            "org_dist": df_org_dist
         }
         
     except Exception as e:
@@ -287,7 +303,8 @@ def get_global_stats(
             "os_dist": pd.DataFrame(),
             "vendor_dist": pd.DataFrame(),
             "total_devices": 0,
-            "source_coverage": pd.DataFrame()
+            "source_coverage": pd.DataFrame(),
+            "org_dist": pd.DataFrame()
         }
 
 @st.cache_data
@@ -689,6 +706,7 @@ if 'last_stats' not in st.session_state:
         "vendor_dist": pd.DataFrame(),
         "total_devices": 0,
         "source_coverage": pd.DataFrame(),
+        "org_dist": pd.DataFrame(),
         "risk_dist": pd.DataFrame(),
         "risk_critical": pd.DataFrame(),
         "risk_high": pd.DataFrame(),
@@ -807,6 +825,7 @@ df_os = stats.get("os_dist", pd.DataFrame())
 df_vendor = stats.get("vendor_dist", pd.DataFrame())
 total_devices = stats.get("total_devices", 0)
 df_sources = stats.get("source_coverage", pd.DataFrame())
+df_org_dist = stats.get("org_dist", pd.DataFrame())
 df_risk = stats.get("risk_dist", pd.DataFrame())
 df_critical = stats.get("risk_critical", pd.DataFrame())
 df_high = stats.get("risk_high", pd.DataFrame())
@@ -1040,6 +1059,62 @@ else:
             st.plotly_chart(fig_vendor, use_container_width=True)
         else:
             st.info("No vendor data available.")
+        
+        # Top 20 Organizations - Lollipop Chart
+        st.divider()
+        st.subheader("Top 20 Organizations")
+        
+        if not df_org_dist.empty:
+            # Get top 20 for display
+            df_org_top20 = df_org_dist.head(20).copy()
+            df_org_top20 = df_org_top20.sort_values('count', ascending=True)  # For horizontal chart
+            
+            # Create lollipop chart (scatter + line segments)
+            fig_lollipop = go.Figure()
+            
+            # Add lines (stems)
+            for i, row in df_org_top20.iterrows():
+                fig_lollipop.add_trace(go.Scatter(
+                    x=[0, row['count']],
+                    y=[row['organization'], row['organization']],
+                    mode='lines',
+                    line=dict(color='#3f51b5', width=2),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+            
+            # Add dots (lollipop heads)
+            fig_lollipop.add_trace(go.Scatter(
+                x=df_org_top20['count'],
+                y=df_org_top20['organization'],
+                mode='markers+text',
+                marker=dict(size=12, color='#3f51b5'),
+                text=df_org_top20['count'].apply(lambda x: f'{x:,}'),
+                textposition='middle right',
+                textfont=dict(size=11),
+                showlegend=False,
+                hovertemplate='%{y}<br>Count: %{x:,}<extra></extra>'
+            ))
+            
+            fig_lollipop.update_layout(
+                height=max(400, len(df_org_top20) * 30),
+                margin=dict(l=0, r=60, t=20, b=40),
+                xaxis_title="Device Count",
+                yaxis_title="",
+                yaxis=dict(tickfont=dict(size=12)),
+                plot_bgcolor='rgba(0,0,0,0)'
+            )
+            st.plotly_chart(fig_lollipop, use_container_width=True)
+            
+            # CSV Download for all organizations
+            st.download_button(
+                label="📥 Download All Organizations (CSV)",
+                data=df_org_dist.to_csv(index=False),
+                file_name="organizations_device_count.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("No organization data available.")
 
     with tab_risk:
         st.subheader("Risk Score Distribution")
@@ -1097,14 +1172,14 @@ else:
         # Counters at the top
         col_confirmed, col_potential = st.columns(2)
         with col_confirmed:
-            st.metric(label="✅ Confirmed", value=f"{vuln_confirmed_total:,}")
+            st.metric(label="🔴 Confirmed", value=f"{vuln_confirmed_total:,}")
         with col_potential:
-            st.metric(label="⚠️ Potentially Relevant", value=f"{vuln_potential_total:,}")
+            st.metric(label="🟡 Potentially Relevant", value=f"{vuln_potential_total:,}")
         
         st.divider()
         
         # Confirmed Vulnerabilities Table
-        st.markdown("### ✅ Confirmed Vulnerabilities")
+        st.markdown("### 🔴 Confirmed Vulnerabilities")
         if not df_vuln_confirmed.empty:
             st.dataframe(df_vuln_confirmed, use_container_width=True, hide_index=True)
         else:
@@ -1113,7 +1188,7 @@ else:
         st.divider()
         
         # Potentially Relevant Vulnerabilities Table
-        st.markdown("### ⚠️ Potentially Relevant Vulnerabilities")
+        st.markdown("### 🟡 Potentially Relevant Vulnerabilities")
         if not df_vuln_potential.empty:
             st.dataframe(df_vuln_potential, use_container_width=True, hide_index=True)
         else:
