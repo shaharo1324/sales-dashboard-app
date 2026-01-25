@@ -1049,12 +1049,12 @@ else:
             # Create aggregated tables for Device Type Family and Vendor
             # Device Type Family counts (filter only where device_type_family is not null)
             df_dtype_counts = df_top[df_top['device_type_family'].notna()].groupby('device_type_family')['count'].sum().reset_index()
-            df_dtype_counts = df_dtype_counts.sort_values('count', ascending=False).head(20)
+            df_dtype_counts = df_dtype_counts.sort_values('count', ascending=False).head(100)
             df_dtype_counts.columns = ['device_type_family', 'count']
             
             # Vendor counts (filter only where vendor is not null)
             df_vendor_counts = df_top[df_top['vendor'].notna()].groupby('vendor')['count'].sum().reset_index()
-            df_vendor_counts = df_vendor_counts.sort_values('count', ascending=False).head(20)
+            df_vendor_counts = df_vendor_counts.sort_values('count', ascending=False).head(100)
             df_vendor_counts.columns = ['vendor', 'count']
             
             # Display two tables side by side
