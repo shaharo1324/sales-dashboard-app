@@ -43,6 +43,27 @@ st.markdown("""
 
 st.header("Sales Dashboard")
 
+# Help popover with usage instructions and contact info
+with st.popover("ℹ️ Help"):
+    st.markdown("""
+    ### Sales Dashboard
+    
+    Explore general and cross-organization statistics about our data globally.
+    
+    **💡 Tip:** When filtering by a specific **Vendor** or **Model**, you'll have 
+    an option at the bottom of the Global tab to retrieve UID examples with the 
+    best classification combinations.
+    
+    ---
+    
+    **Need assistance?**  
+    Feel free to contact me for any purpose — whether it's requesting new features 
+    for the dashboard, reporting an error, or flagging unexpected data discrepancies.
+    
+    📧 [shahar.o@claroty.com](mailto:shahar.o@claroty.com)  
+    💬 [Slack](https://claroty.enterprise.slack.com/team/U06L8BEFXPT)
+    """)
+
 MAIN_SQL_HTTP_PATH = "/sql/1.0/warehouses/472969065f3aed02"
 
 cfg = Config()
