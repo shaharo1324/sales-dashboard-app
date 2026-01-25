@@ -1062,14 +1062,14 @@ else:
             col_dtype, col_vendor = st.columns(2)
             
             with col_dtype:
-                st.markdown("#### Top 20 Device Type Families")
+                st.markdown("#### Top Device Type Families")
                 if not df_dtype_counts.empty:
                     st.dataframe(df_dtype_counts, use_container_width=True, hide_index=True)
                 else:
                     st.info("No device type family data available.")
             
             with col_vendor:
-                st.markdown("#### Top 20 Vendors")
+                st.markdown("#### Top Vendors")
                 if not df_vendor_counts.empty:
                     st.dataframe(df_vendor_counts, use_container_width=True, hide_index=True)
                 else:
