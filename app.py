@@ -159,7 +159,8 @@ def get_global_stats(
             device_type_family, device_subcategory, model, os_name, mac_oui
         )
         
-        # Query 1: Top Devices (Aggregated)
+        # Query 1: Top Devices (Aggregated) - Without null filtering
+        # We'll filter nulls in Python to reuse data for multiple tables
         query_top_devices = f"""
         SELECT 
             vendor,
@@ -168,12 +169,9 @@ def get_global_stats(
             COUNT(*) as count
         FROM `s3-write-bucket`.sales_dashboard.displayable_devices
         WHERE {where_clause}
-            AND vendor IS NOT NULL 
-            AND device_type_family IS NOT NULL 
-            AND model IS NOT NULL
         GROUP BY vendor, device_type_family, model
         ORDER BY count DESC
-        LIMIT 1000
+        LIMIT 5000
         """
         
         # Query 2: Device Subcategory Distribution (Aggregated)
@@ -1032,12 +1030,50 @@ else:
         st.subheader("Top Devices by Vendor, Device Type Family, and Model")
         
         if not df_top.empty:
-            # Display table (already aggregated and sorted from SQL)
-            st.dataframe(
-                df_top,
-                use_container_width=True,
-                hide_index=True
-            )
+            # Filter for rows where all three fields are not null
+            df_top_filtered = df_top[
+                df_top['vendor'].notna() & 
+                df_top['device_type_family'].notna() & 
+                df_top['model'].notna()
+            ].head(1000)
+            
+            if not df_top_filtered.empty:
+                st.dataframe(
+                    df_top_filtered,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("No data available with all three fields populated.")
+            
+            # Create aggregated tables for Device Type Family and Vendor
+            # Device Type Family counts (filter only where device_type_family is not null)
+            df_dtype_counts = df_top[df_top['device_type_family'].notna()].groupby('device_type_family')['count'].sum().reset_index()
+            df_dtype_counts = df_dtype_counts.sort_values('count', ascending=False).head(20)
+            df_dtype_counts.columns = ['device_type_family', 'count']
+            
+            # Vendor counts (filter only where vendor is not null)
+            df_vendor_counts = df_top[df_top['vendor'].notna()].groupby('vendor')['count'].sum().reset_index()
+            df_vendor_counts = df_vendor_counts.sort_values('count', ascending=False).head(20)
+            df_vendor_counts.columns = ['vendor', 'count']
+            
+            # Display two tables side by side
+            st.divider()
+            col_dtype, col_vendor = st.columns(2)
+            
+            with col_dtype:
+                st.markdown("#### Top 20 Device Type Families")
+                if not df_dtype_counts.empty:
+                    st.dataframe(df_dtype_counts, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No device type family data available.")
+            
+            with col_vendor:
+                st.markdown("#### Top 20 Vendors")
+                if not df_vendor_counts.empty:
+                    st.dataframe(df_vendor_counts, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No vendor data available.")
         else:
             st.info("No data available with all three fields (vendor, device_type_family, model) populated.")
 
