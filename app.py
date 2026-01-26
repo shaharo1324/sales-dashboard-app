@@ -50,6 +50,10 @@ with st.popover("📖 Info"):
     
     Explore general and cross-organization statistics about our data globally.
     
+    **🔘 Applying Filters:** Filters are not applied automatically. After selecting 
+    your desired filters in the sidebar, click the **"Apply Filters & Refresh"** 
+    button to update the dashboard.
+    
     **💡 Tip:** When filtering by a specific **Vendor** or **Model**, you'll have 
     an option at the bottom of the Global tab to retrieve UID examples with the 
     best classification combinations.
