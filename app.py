@@ -44,9 +44,6 @@ st.markdown("""
 
 st.header("Sales Dashboard")
 
-# Invisible anchor at top for scroll-to-top functionality
-st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
-
 # Help popover with usage instructions and contact info
 with st.popover("📖 Info"):
     st.markdown("""
@@ -830,41 +827,20 @@ if should_query:
     }
     st.session_state.last_filters = current_filters
     
-    # Scroll to top of page using JavaScript
-    st.markdown(
-        """
-        <style>
-            /* Force scroll to top via CSS animation trick */
-            html {
-                scroll-behavior: smooth;
-            }
-        </style>
-        <script>
-            // Multiple approaches to scroll to top
-            var scrolled = false;
-            function tryScroll() {
-                if (scrolled) return;
-                try {
-                    // Method 1: Direct parent scroll
-                    window.parent.scrollTo(0, 0);
-                    // Method 2: Find Streamlit's main container
-                    var containers = window.parent.document.querySelectorAll('.main, section.main, [data-testid="stAppViewContainer"]');
-                    for (var i = 0; i < containers.length; i++) {
-                        containers[i].scrollTop = 0;
-                    }
-                    // Method 3: Scroll the anchor into view
-                    var anchor = window.parent.document.getElementById('top-anchor');
-                    if (anchor) anchor.scrollIntoView(true);
-                    scrolled = true;
-                } catch(e) {}
-            }
-            tryScroll();
-            setTimeout(tryScroll, 100);
-            setTimeout(tryScroll, 500);
-        </script>
-        """,
-        unsafe_allow_html=True
-    )
+    # Scroll to top of page smoothly
+    js = '''
+    <script>
+        function scrollUp() {
+            window.parent.window.scrollTo({top: 0, left: 0, behavior: 'smooth'});
+        }
+        // Run immediately
+        scrollUp();
+        // And run again after a tiny delay just in case Streamlit is re-rendering
+        setTimeout(scrollUp, 50);
+        setTimeout(scrollUp, 200);
+    </script>
+    '''
+    components.html(js, height=0)
     
     # Mark initial load as done
     if not st.session_state.initial_load_done:
