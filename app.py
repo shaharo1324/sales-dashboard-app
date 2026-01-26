@@ -786,6 +786,8 @@ if 'last_filters' not in st.session_state:
     st.session_state.last_filters = {}
 if 'initial_load_done' not in st.session_state:
     st.session_state.initial_load_done = False
+if 'vuln_needs_refresh' not in st.session_state:
+    st.session_state.vuln_needs_refresh = True
 
 # Auto-load on first run when all filters are "All" (None)
 all_filters_all = (
@@ -823,6 +825,13 @@ if should_query:
         'mac_oui': selected_mac_oui
     }
     st.session_state.last_filters = current_filters
+    
+    # Scroll to top of page smoothly
+    st.markdown("""
+        <script>
+            window.parent.document.querySelector('section.main').scrollTo({top: 0, behavior: 'smooth'});
+        </script>
+    """, unsafe_allow_html=True)
     
     # Mark initial load as done
     if not st.session_state.initial_load_done:
@@ -864,23 +873,8 @@ if should_query:
         )
         st.session_state.last_stats.update(stats_risk)
     
-    # Update state with Vulnerability stats
-    with st.spinner("Loading Vulnerability data..."):
-        stats_vuln = get_vulnerability_stats(
-            region=selected_region,
-            vertical=selected_vertical,
-            organization=selected_organization,
-            industry=selected_industry,
-            account_status=selected_account_status,
-            vendor=selected_vendor,
-            device_category=selected_device_category,
-            device_type_family=selected_device_type_family,
-            device_subcategory=selected_device_subcategory,
-            model=selected_model,
-            os_name=selected_os_name,
-            mac_oui=selected_mac_oui
-        )
-        st.session_state.last_stats.update(stats_vuln)
+    # Mark vulnerability data as needing refresh (will load lazily when tab is viewed)
+    st.session_state.vuln_needs_refresh = True
 
 # Get current stats (either newly fetched or from last run)
 stats = st.session_state.last_stats
@@ -896,10 +890,7 @@ df_risk = stats.get("risk_dist", pd.DataFrame())
 df_critical = stats.get("risk_critical", pd.DataFrame())
 df_high = stats.get("risk_high", pd.DataFrame())
 df_medium = stats.get("risk_medium", pd.DataFrame())
-df_vuln_confirmed = stats.get("vuln_confirmed", pd.DataFrame())
-df_vuln_potential = stats.get("vuln_potential", pd.DataFrame())
-vuln_confirmed_total = stats.get("vuln_confirmed_total", 0)
-vuln_potential_total = stats.get("vuln_potential_total", 0)
+# Note: Vulnerability data is loaded lazily in the Vulnerabilities tab
 
 # Show data status (based on Global stats)
 data_loaded = not df_top.empty or not df_sub.empty or not df_cat.empty
@@ -1333,6 +1324,32 @@ else:
     
     with tab_vuln:
         st.subheader("Vulnerability Analysis")
+        
+        # Lazy load vulnerability data when tab is viewed
+        if st.session_state.vuln_needs_refresh:
+            with st.spinner("Loading Vulnerability data..."):
+                stats_vuln = get_vulnerability_stats(
+                    region=selected_region,
+                    vertical=selected_vertical,
+                    organization=selected_organization,
+                    industry=selected_industry,
+                    account_status=selected_account_status,
+                    vendor=selected_vendor,
+                    device_category=selected_device_category,
+                    device_type_family=selected_device_type_family,
+                    device_subcategory=selected_device_subcategory,
+                    model=selected_model,
+                    os_name=selected_os_name,
+                    mac_oui=selected_mac_oui
+                )
+                st.session_state.last_stats.update(stats_vuln)
+                st.session_state.vuln_needs_refresh = False
+        
+        # Get vulnerability data from session state
+        df_vuln_confirmed = st.session_state.last_stats.get("vuln_confirmed", pd.DataFrame())
+        df_vuln_potential = st.session_state.last_stats.get("vuln_potential", pd.DataFrame())
+        vuln_confirmed_total = st.session_state.last_stats.get("vuln_confirmed_total", 0)
+        vuln_potential_total = st.session_state.last_stats.get("vuln_potential_total", 0)
         
         # Counters at the top
         col_confirmed, col_potential = st.columns(2)
