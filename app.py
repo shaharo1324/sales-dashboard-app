@@ -464,64 +464,46 @@ def get_vulnerability_stats(
 ) -> Dict[str, pd.DataFrame]:
     """Fetch aggregated statistics for the Vulnerabilities tab.
     
-    Uses a CTE to filter devices ONCE, then joins vulnerabilities to this smaller set.
-    Gets both Confirmed and Potentially Relevant in a single query for efficiency.
-    Also returns total counts for each category.
+    Queries the denormalized vulnerability table directly (no JOIN needed).
+    Uses LATERAL VIEW EXPLODE to unnest vulnerability arrays.
+    Splits Confirmed vs Potentially Relevant in pandas for efficiency.
     """
     try:
-        # Build WHERE clause for devices table
+        # Build WHERE clause - applies directly to vulnerability table (has all filter fields)
         where_clause = build_where_clause(
             region, vertical, organization, industry, account_status, vendor, device_category,
             device_type_family, device_subcategory, model, os_name, mac_oui
         )
         
-        # Single query using CTE:
-        # 1. filtered_devices: Get device keys matching our filters (scanned ONCE)
-        # 2. vuln_counts: Join vulnerabilities, group by relevance + name + source, rank by count
-        # 3. Select top 100 per effective_relevance category
-        # Also calculates total count per category using SUM() OVER()
+        # Single query: Filter by device attributes, EXPLODE array, aggregate by relevance + vuln
+        # No JOIN needed - table already contains all filter fields
         query_vuln = f"""
-        WITH filtered_devices AS (
-            SELECT region, organization, uid
-            FROM `s3-write-bucket`.sales_dashboard.displayable_devices
-            WHERE {where_clause}
-        ),
-        vuln_counts AS (
-            SELECT 
-                v.effective_relevance,
-                v.name as advisory_name,
-                v.source_name,
-                COUNT(*) as count,
-                ROW_NUMBER() OVER (PARTITION BY v.effective_relevance ORDER BY COUNT(*) DESC) as rn,
-                SUM(COUNT(*)) OVER (PARTITION BY v.effective_relevance) as total_category_count
-            FROM `s3-write-bucket`.sales_dashboard.displayable_devices_vulnerabilities v
-            INNER JOIN filtered_devices fd
-                ON v.region = fd.region 
-                AND v.organization = fd.organization 
-                AND v.device_uid = fd.uid
-            WHERE v.effective_relevance IN ('Confirmed', 'Potentially Relevant')
-            GROUP BY v.effective_relevance, v.name, v.source_name
-        )
-        SELECT effective_relevance, advisory_name, source_name, count, total_category_count
-        FROM vuln_counts
-        WHERE rn <= 100
+        SELECT 
+            effective_relevance,
+            v.name as advisory_name,
+            v.source_name,
+            COUNT(*) as count
+        FROM `s3-write-bucket`.sales_dashboard.displayable_devices_vulnerabilities
+        LATERAL VIEW EXPLODE(vulnerabilities_list) exploded AS v
+        WHERE {where_clause}
+        GROUP BY effective_relevance, v.name, v.source_name
         ORDER BY effective_relevance, count DESC
         """
         
         results = execute_sql_query(query_vuln)
-        df_all = pd.DataFrame(results, columns=['effective_relevance', 'advisory_name', 'source_name', 'count', 'total_category_count'])
+        df_all = pd.DataFrame(results, columns=['effective_relevance', 'advisory_name', 'source_name', 'count'])
         
-        # Split results by effective_relevance
-        df_confirmed_full = df_all[df_all['effective_relevance'] == 'Confirmed']
-        df_potential_full = df_all[df_all['effective_relevance'] == 'Potentially Relevant']
+        # Split results by effective_relevance in pandas
+        df_confirmed_all = df_all[df_all['effective_relevance'] == 'Confirmed'].copy()
+        df_potential_all = df_all[df_all['effective_relevance'] == 'Potentially Relevant'].copy()
         
-        # Extract totals (same value repeated in each row, just take first)
-        total_confirmed = int(df_confirmed_full['total_category_count'].iloc[0]) if not df_confirmed_full.empty else 0
-        total_potential = int(df_potential_full['total_category_count'].iloc[0]) if not df_potential_full.empty else 0
+        # Calculate totals (sum of all counts per category)
+        total_confirmed = int(df_confirmed_all['count'].sum()) if not df_confirmed_all.empty else 0
+        total_potential = int(df_potential_all['count'].sum()) if not df_potential_all.empty else 0
         
-        # Get just the display columns
-        df_confirmed = df_confirmed_full[['advisory_name', 'source_name', 'count']].reset_index(drop=True)
-        df_potential = df_potential_full[['advisory_name', 'source_name', 'count']].reset_index(drop=True)
+        # Get top 100 for display
+        df_confirmed = df_confirmed_all[['advisory_name', 'source_name', 'count']].head(100).reset_index(drop=True)
+        df_potential = df_potential_all[['advisory_name', 'source_name', 'count']].head(100).reset_index(drop=True)
         
         return {
             "vuln_confirmed": df_confirmed,
