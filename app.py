@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from databricks import sql
 from databricks.sdk.core import Config
@@ -827,11 +828,14 @@ if should_query:
     st.session_state.last_filters = current_filters
     
     # Scroll to top of page smoothly
-    st.markdown("""
+    components.html("""
         <script>
-            window.parent.document.querySelector('section.main').scrollTo({top: 0, behavior: 'smooth'});
+            // Try multiple methods to scroll to top
+            window.parent.document.querySelector('[data-testid="stAppViewContainer"]')?.scrollTo({top: 0, behavior: 'smooth'});
+            window.parent.scrollTo({top: 0, behavior: 'smooth'});
+            window.parent.document.documentElement.scrollTop = 0;
         </script>
-    """, unsafe_allow_html=True)
+    """, height=0)
     
     # Mark initial load as done
     if not st.session_state.initial_load_done:
