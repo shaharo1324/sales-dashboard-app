@@ -44,7 +44,7 @@ st.markdown("""
 st.header("Sales Dashboard")
 
 # Help popover with usage instructions and contact info
-with st.popover("ℹ️ Help"):
+with st.popover("📖 Info"):
     st.markdown("""
     ### Sales Dashboard
     
