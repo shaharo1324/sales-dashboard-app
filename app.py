@@ -44,6 +44,9 @@ st.markdown("""
 
 st.header("Sales Dashboard")
 
+# Invisible anchor at top for scroll-to-top functionality
+st.markdown('<div id="top-anchor"></div>', unsafe_allow_html=True)
+
 # Help popover with usage instructions and contact info
 with st.popover("📖 Info"):
     st.markdown("""
@@ -827,15 +830,41 @@ if should_query:
     }
     st.session_state.last_filters = current_filters
     
-    # Scroll to top of page smoothly
-    components.html("""
+    # Scroll to top of page using JavaScript
+    st.markdown(
+        """
+        <style>
+            /* Force scroll to top via CSS animation trick */
+            html {
+                scroll-behavior: smooth;
+            }
+        </style>
         <script>
-            // Try multiple methods to scroll to top
-            window.parent.document.querySelector('[data-testid="stAppViewContainer"]')?.scrollTo({top: 0, behavior: 'smooth'});
-            window.parent.scrollTo({top: 0, behavior: 'smooth'});
-            window.parent.document.documentElement.scrollTop = 0;
+            // Multiple approaches to scroll to top
+            var scrolled = false;
+            function tryScroll() {
+                if (scrolled) return;
+                try {
+                    // Method 1: Direct parent scroll
+                    window.parent.scrollTo(0, 0);
+                    // Method 2: Find Streamlit's main container
+                    var containers = window.parent.document.querySelectorAll('.main, section.main, [data-testid="stAppViewContainer"]');
+                    for (var i = 0; i < containers.length; i++) {
+                        containers[i].scrollTop = 0;
+                    }
+                    // Method 3: Scroll the anchor into view
+                    var anchor = window.parent.document.getElementById('top-anchor');
+                    if (anchor) anchor.scrollIntoView(true);
+                    scrolled = true;
+                } catch(e) {}
+            }
+            tryScroll();
+            setTimeout(tryScroll, 100);
+            setTimeout(tryScroll, 500);
         </script>
-    """, height=0)
+        """,
+        unsafe_allow_html=True
+    )
     
     # Mark initial load as done
     if not st.session_state.initial_load_done:
