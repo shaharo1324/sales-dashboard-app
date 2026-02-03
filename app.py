@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 from databricks import sql
 from databricks.sdk.core import Config
@@ -826,21 +825,6 @@ if should_query:
         'mac_oui': selected_mac_oui
     }
     st.session_state.last_filters = current_filters
-    
-    # Scroll to top of page smoothly
-    js = '''
-    <script>
-        function scrollUp() {
-            window.parent.window.scrollTo({top: 0, left: 0, behavior: 'smooth'});
-        }
-        // Run immediately
-        scrollUp();
-        // And run again after a tiny delay just in case Streamlit is re-rendering
-        setTimeout(scrollUp, 50);
-        setTimeout(scrollUp, 200);
-    </script>
-    '''
-    components.html(js, height=0)
     
     # Mark initial load as done
     if not st.session_state.initial_load_done:
